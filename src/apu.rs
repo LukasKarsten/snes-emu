@@ -759,11 +759,27 @@ impl Apu {
     }
 
     fn inst_daa(&mut self) {
-        todo!()
+        if self.psw.c || self.a > 0x99 {
+            self.a = self.a.wrapping_add(0x60);
+            self.psw.c = true;
+        }
+        if self.psw.h || self.a & 0x0F > 0x09 {
+            self.a = self.a.wrapping_add(0x06);
+        }
+        self.psw.n = self.a & 0x80 != 0;
+        self.psw.z = self.a == 0;
     }
 
     fn inst_das(&mut self) {
-        todo!()
+        if !self.psw.c || self.a > 0x99 {
+            self.a = self.a.wrapping_sub(0x60);
+            self.psw.c = false;
+        }
+        if !self.psw.h || self.a & 0x0F > 0x09 {
+            self.a = self.a.wrapping_sub(0x06);
+        }
+        self.psw.n = self.a & 0x80 != 0;
+        self.psw.z = self.a == 0;
     }
 
     fn inst_xcn(&mut self) {
