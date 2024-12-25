@@ -656,11 +656,21 @@ impl Apu {
     }
 
     fn inst_div(&mut self) {
+        self.psw.v = self.y >= self.x;
+        self.psw.h = self.y & 0x0F >= self.x & 0x0F;
         let ya = self.get_ya();
-        // FIXME: handle divide by zero
-        self.a = (ya / self.x as u16) as u8;
-        self.y = (ya % self.x as u16) as u8;
-        // TODO: figure out how the flags are derived
+        let x = self.x as u16;
+        if self.y < self.x << 1 {
+            self.a = (ya / x as u16) as u8;
+            self.y = (ya % x as u16) as u8;
+        } else {
+            let quotient = ya - (x << 9);
+            let divident = 256 - x;
+            self.a = 255u16.wrapping_sub(quotient / divident) as u8;
+            self.y = x.wrapping_add(quotient % divident) as u8;
+        }
+        self.psw.n = self.a & 0x80 != 0;
+        self.psw.z = self.a == 0;
     }
 
     fn inst_mul(&mut self) {
