@@ -1134,22 +1134,23 @@ impl Ppu {
         let map_entry_hi = io.vram[usize::from(map_entry_addr + 1)];
         let map_entry = (map_entry_lo as u16) | (map_entry_hi as u16) << 8;
 
-        if bg.large_tiles {
-            todo!();
-        }
+        let tile_size = 8 << (bg.large_tiles as u8);
 
-        let tile_number = map_entry & 0x03FF;
+        let mut tile_number = map_entry & 0x03FF;
         let palette_number = ((map_entry >> 10) & 0x7) as u8;
         let _bg_priority = (map_entry >> 13) & 1;
         let x_flip = (map_entry >> 14) & 1 != 0;
         let y_flip = (map_entry >> 15) & 1 != 0;
 
         if x_flip {
-            tile_off_x = 7 - tile_off_x;
+            tile_off_x = tile_size - 1 - tile_off_x;
         }
         if y_flip {
-            tile_off_y = 7 - tile_off_y;
+            tile_off_y = tile_size - 1 - tile_off_y;
         }
+
+        tile_number = tile_number.wrapping_add(tile_off_x >> 3);
+        tile_number = tile_number.wrapping_add((tile_off_y >> 3) * 16);
 
         let bytes_per_tile = bpp * 8;
 
@@ -1159,13 +1160,11 @@ impl Ppu {
         let mut palette_idx = 0;
 
         for plane_off in (0..bpp).step_by(2) {
-            let plane_pair_addr = usize::from(
-                tile_addr
-                    .wrapping_add(tile_off_y * 2)
-                    .wrapping_add(plane_off * 8),
-            );
-            let plane1 = io.vram[plane_pair_addr + 0];
-            let plane2 = io.vram[plane_pair_addr + 1];
+            let plane_pair_addr = tile_addr
+                .wrapping_add((tile_off_y & 0x07) * 2)
+                .wrapping_add(plane_off * 8);
+            let plane1 = io.vram[usize::from(plane_pair_addr) + 0];
+            let plane2 = io.vram[usize::from(plane_pair_addr) + 1];
 
             let bit1 = plane1.rotate_left(tile_off_x as u32 + 1) & 1;
             let bit2 = plane2.rotate_left(tile_off_x as u32 + 1) & 1;
