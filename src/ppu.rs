@@ -934,49 +934,53 @@ impl Ppu {
     }
 
     fn render_pixel(&self, io: &PpuIo, x: u16, y: u16) -> OutputColor {
+        let mode = io.backgrounds.mode.value();
+        if mode == 7 {
+            todo!()
+        }
+        let mode_def = &ModeDefinition::MODES[usize::from(mode)];
+
         let window = self.compute_window_mask(io, x);
 
-        let colors = self.get_layer_colors(io, x, y);
-        let main_layers = colors.opaque & io.screens.tm & !(window & io.windows.tmw);
-        let sub_layers = colors.opaque & io.screens.ts & !(window & io.windows.tsw);
+        let colors = self.get_layer_colors(io, x, y, mode_def);
+        let main_layers = io.screens.tm & !(window & io.windows.tmw);
+        let sub_layers = io.screens.ts & !(window & io.windows.tsw);
 
-        // FIXME: This is completely wrong
-        let mut main_layer = match main_layers {
-            0 => LAYER_BACKDROP,
-            _ => main_layers.trailing_zeros() as u8,
-        };
-        let mut sub_layer = match sub_layers {
-            0 => LAYER_BACKDROP,
-            _ => sub_layers.trailing_zeros() as u8,
-        };
+        fn select_color(
+            colors: &[LayerColor; NUM_LAYERS],
+            mut layers: u8,
+            bg3_high_priority: bool,
+        ) -> (Color, u8) {
+            if bg3_high_priority
+                && (layers & (1 << LAYER_BG3) != 0)
+                && colors[LAYER_BG3 as usize].priority > 0
+            {
+                return (colors[LAYER_BG3 as usize].color, LAYER_BG3);
+            }
 
-        if io.backgrounds.bg3_high_priority {
-            if main_layers & (1 << LAYER_BG3) != 0 {
-                main_layer = LAYER_BG3;
+            layers &= 0x1F;
+
+            let mut layer = LAYER_BACKDROP;
+            while layers != 0 {
+                let i = layers.trailing_zeros() as u8;
+                layers &= layers - 1;
+                if colors[i as usize].priority > colors[layer as usize].priority {
+                    layer = i;
+                }
             }
-            if sub_layers & (1 << LAYER_BG3) != 0 {
-                sub_layer = LAYER_BG3;
-            }
+            (colors[layer as usize].color, layer)
         }
 
-        let mut main_color = colors.colors[usize::from(main_layer)];
-        let mut sub_color = match io.screens.sub_screen_bg_obj_enable {
-            true => colors.colors[usize::from(sub_layer)],
-            false => [
-                io.screens.backdrop_red,
-                io.screens.backdrop_green,
-                io.screens.backdrop_blue,
-            ],
-        };
+        let bg3_high_priority = mode == 1 && io.backgrounds.bg3_high_priority;
+        let (mut main_color, main_layer) = select_color(&colors, main_layers, bg3_high_priority);
 
         let window_math_enabled = (window & WINDOW_MATH) == 0;
         let enable_screen_lut = [false, window_math_enabled, !window_math_enabled, true];
 
         let enable_main_screen = enable_screen_lut[usize::from(io.windows.main_screen_black as u8)];
 
-        // PERF: This can be implemented branchless
         if !enable_main_screen {
-            main_color = [u5::new(0); 3];
+            main_color = Color::BLACK;
         }
 
         let math_enabled = match main_layer {
@@ -989,31 +993,46 @@ impl Ppu {
         };
 
         if !math_enabled {
-            return OutputColor::from_rgb(main_color[0], main_color[1], main_color[2]);
+            return OutputColor::from_rgb(main_color.r, main_color.g, main_color.b);
         }
 
         let enable_sub_screen = enable_screen_lut[usize::from(io.windows.sub_screen_black as u8)];
 
-        if !enable_sub_screen {
-            sub_color = [u5::new(0); 3];
+        let mut sub_color = Color::BLACK;
+        let mut sub_layer = LAYER_BACKDROP;
+        if enable_sub_screen {
+            (sub_color, sub_layer) = match io.screens.sub_screen_bg_obj_enable {
+                true => select_color(&colors, sub_layers, bg3_high_priority),
+                false => (
+                    Color::new(
+                        io.screens.backdrop_red,
+                        io.screens.backdrop_green,
+                        io.screens.backdrop_blue,
+                    ),
+                    0xFF,
+                ),
+            };
         }
 
-        let mut output = sub_color.map(|v| v.value() as i8);
+        let mut output = [
+            sub_color.r.value() as i8,
+            sub_color.g.value() as i8,
+            sub_color.b.value() as i8,
+        ];
 
         if io.screens.math_operation == MathOperation::Sub {
             output.map(std::ops::Neg::neg);
         }
 
-        output[0] += main_color[0].value() as i8;
-        output[1] += main_color[1].value() as i8;
-        output[2] += main_color[2].value() as i8;
+        output[0] += main_color.r.value() as i8;
+        output[1] += main_color.g.value() as i8;
+        output[2] += main_color.b.value() as i8;
 
-        // TODO: This must be ignored sometimes
-        if io.screens.half {
-            output[0] /= 2;
-            output[1] /= 2;
-            output[2] /= 2;
+        if io.screens.half && enable_main_screen && sub_layer != LAYER_BACKDROP {
+            output = output.map(|v| v / 2);
         }
+
+        output = output.map(|v| v.clamp(0x00, 0x1F));
 
         OutputColor::from_rgb(
             u5::extract_u8(output[0] as u8, 0),
@@ -1053,22 +1072,19 @@ impl Ppu {
         (or & masks[0]) | (and & masks[1]) | (xor & masks[2]) | (xnor & masks[3])
     }
 
-    fn get_layer_colors(&self, io: &PpuIo, x: u16, y: u16) -> LayerColors {
-        let mode = io.backgrounds.mode.value();
-        if mode == 7 {
-            todo!()
+    fn get_layer_colors(
+        &self,
+        io: &PpuIo,
+        x: u16,
+        y: u16,
+        mode_def: &ModeDefinition,
+    ) -> [LayerColor; NUM_LAYERS] {
+        let mut colors = [LayerColor::TRANSPARENT; NUM_LAYERS];
+        colors[LAYER_BACKDROP as usize] = LayerColor::new(self.get_color(io, 0), 0);
+
+        for i in 0..usize::from(mode_def.num_backgrounds) {
+            colors[i] = self.get_bg_color(io, x, y, i, mode_def);
         }
-
-        let mode_caps = &ModeCapabilities::MODES[usize::from(mode)];
-
-        let mut colors = LayerColors::default();
-
-        for i in 0..usize::from(mode_caps.num_backgrounds) {
-            let color = self.get_bg_color(io, x, y, i, mode_caps);
-            colors.set(i, color);
-        }
-
-        colors.set(LAYER_BACKDROP as usize, self.get_color(io, 0));
 
         colors
     }
@@ -1080,8 +1096,8 @@ impl Ppu {
         x: u16,
         y: u16,
         bg_num: usize,
-        mode_caps: &ModeCapabilities,
-    ) -> Color {
+        mode_def: &ModeDefinition,
+    ) -> LayerColor {
         let bg = &io.backgrounds.backgrounds[bg_num];
 
         // screens in the order: top left, top right, bottom left, bottom right
@@ -1103,8 +1119,8 @@ impl Ppu {
 
         let tile_idx = (tile_y & 0x1F) * 32 + (tile_x & 0x1F);
 
-        let bpp = mode_caps.bpp[bg_num] as u16;
-        let palette_offset = mode_caps.palette_offset[bg_num];
+        let bpp = mode_def.bpp[bg_num] as u16;
+        let palette_offset = mode_def.palette_offset[bg_num];
         self.get_screen_color(
             io,
             bg,
@@ -1114,6 +1130,7 @@ impl Ppu {
             tile_off_y,
             bpp,
             palette_offset,
+            &mode_def.bg_priorities[bg_num],
         )
     }
 
@@ -1127,7 +1144,8 @@ impl Ppu {
         mut tile_off_y: u16,
         bpp: u16,
         palette_offset: u8,
-    ) -> Color {
+        priorities: &[u8; 2],
+    ) -> LayerColor {
         let tilemap_addr = ((bg.base_address.value() + screen) as u16) << 10; // * 1024
         let map_entry_addr = tilemap_addr.wrapping_add(tile_idx) << 1;
         let map_entry_lo = io.vram[usize::from(map_entry_addr + 0)];
@@ -1138,7 +1156,7 @@ impl Ppu {
 
         let mut tile_number = map_entry & 0x03FF;
         let palette_number = ((map_entry >> 10) & 0x7) as u8;
-        let _bg_priority = (map_entry >> 13) & 1;
+        let bg_priority = (map_entry >> 13) & 1 != 0;
         let x_flip = (map_entry >> 14) & 1 != 0;
         let y_flip = (map_entry >> 15) & 1 != 0;
 
@@ -1173,14 +1191,17 @@ impl Ppu {
         }
 
         if palette_idx == 0 {
-            return Color::TRANSPARENT;
+            return LayerColor::TRANSPARENT;
         }
 
         if bpp < 8 {
             palette_idx += palette_number << bpp;
         }
         palette_idx += palette_offset;
-        self.get_color(io, palette_idx)
+        LayerColor::new(
+            self.get_color(io, palette_idx),
+            priorities[bg_priority as usize],
+        )
     }
 
     fn get_color(&self, io: &PpuIo, palette_idx: u8) -> Color {
@@ -1193,51 +1214,67 @@ impl Ppu {
         let g = u5::extract_u16(color, 5);
         let b = u5::extract_u16(color, 10);
 
-        Color::opaque(r, g, b)
+        Color::new(r, g, b)
     }
 }
 
-struct ModeCapabilities {
+struct ModeDefinition {
     num_backgrounds: u8,
     bpp: [u8; 4],
     palette_offset: [u8; 4],
+    bg_priorities: [[u8; 2]; 4],
+    obj_priorities: [u8; 4],
 }
 
-impl ModeCapabilities {
+impl ModeDefinition {
     const MODE0: Self = Self {
         num_backgrounds: 4,
         bpp: [2, 2, 2, 2],
         palette_offset: [0, 32, 64, 96],
+        bg_priorities: [[8, 11], [7, 10], [2, 5], [1, 4]],
+        obj_priorities: [3, 6, 9, 12],
     };
     const MODE1: Self = Self {
         num_backgrounds: 3,
         bpp: [4, 4, 2, 0],
         palette_offset: [0, 0, 0, 0],
+        bg_priorities: [[8, 11], [7, 10], [2, 5], [0, 0]],
+        obj_priorities: [3, 6, 9, 12],
     };
     const MODE2: Self = Self {
         num_backgrounds: 2,
         bpp: [4, 4, 0, 0],
         palette_offset: [0, 0, 0, 0],
+        bg_priorities: [[3, 7], [1, 5], [0, 0], [0, 0]],
+        obj_priorities: [2, 4, 6, 8],
     };
     const MODE3: Self = Self {
         num_backgrounds: 2,
         bpp: [8, 4, 0, 0],
         palette_offset: [0, 0, 0, 0],
+        bg_priorities: [[3, 7], [1, 5], [0, 0], [0, 0]],
+        obj_priorities: [2, 4, 6, 8],
     };
     const MODE4: Self = Self {
         num_backgrounds: 2,
         bpp: [8, 2, 0, 0],
         palette_offset: [0, 0, 0, 0],
+        bg_priorities: [[3, 7], [1, 5], [0, 0], [0, 0]],
+        obj_priorities: [2, 4, 6, 8],
     };
     const MODE5: Self = Self {
         num_backgrounds: 2,
         bpp: [4, 2, 0, 0],
         palette_offset: [0, 0, 0, 0],
+        bg_priorities: [[3, 7], [1, 5], [0, 0], [0, 0]],
+        obj_priorities: [2, 4, 6, 8],
     };
     const MODE6: Self = Self {
         num_backgrounds: 1,
         bpp: [4, 0, 0, 0],
         palette_offset: [0, 0, 0, 0],
+        bg_priorities: [[2, 5], [0, 0], [0, 0], [0, 0]],
+        obj_priorities: [1, 3, 4, 6],
     };
 
     const MODES: [Self; 7] = [
@@ -1251,34 +1288,31 @@ impl ModeCapabilities {
     ];
 }
 
-#[derive(Default)]
-struct LayerColors {
-    colors: [[u5; 3]; NUM_LAYERS],
-    opaque: u8,
+#[derive(Default, Clone, Copy)]
+struct LayerColor {
+    color: Color,
+    priority: u8,
 }
 
-impl LayerColors {
-    fn set(&mut self, layer: usize, color: Color) {
-        self.colors[layer] = [color.r, color.g, color.b];
-        self.opaque |= (color.opaque as u8) << layer;
+impl LayerColor {
+    const TRANSPARENT: Self = Self::new(Color::BLACK, 0);
+
+    const fn new(color: Color, priority: u8) -> Self {
+        Self { color, priority }
     }
 }
 
+#[derive(Default, Clone, Copy)]
 struct Color {
     r: u5,
     g: u5,
     b: u5,
-    opaque: bool,
 }
 
 impl Color {
-    const TRANSPARENT: Self = Self::new(u5::new(0), u5::new(0), u5::new(0), false);
+    const BLACK: Self = Self::new(u5::new(0), u5::new(0), u5::new(0));
 
-    const fn new(r: u5, g: u5, b: u5, opaque: bool) -> Self {
-        Self { r, g, b, opaque }
-    }
-
-    fn opaque(r: u5, g: u5, b: u5) -> Self {
-        Self::new(r, g, b, true)
+    const fn new(r: u5, g: u5, b: u5) -> Self {
+        Self { r, g, b }
     }
 }
