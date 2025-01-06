@@ -16,7 +16,7 @@ impl Renderer {
         target: impl Into<wgpu::SurfaceTarget<'static>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::GL,
+            backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
 
