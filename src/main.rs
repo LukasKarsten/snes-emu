@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     process::ExitCode,
     sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
@@ -8,7 +8,6 @@ use std::{
 use debugger::Debugger;
 use game_view::GameView;
 use render::Renderer;
-use serde::{Deserialize, Serialize};
 use snes_emu::{MappingMode, Snes};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use winit::{
@@ -36,13 +35,6 @@ fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     event_loop.run_app(&mut app)?;
     Ok(ExitCode::SUCCESS)
 }
-
-#[derive(Serialize, Deserialize)]
-struct Config {
-    games_dir: PathBuf,
-}
-
-impl Config {}
 
 #[derive(Default)]
 struct App {
