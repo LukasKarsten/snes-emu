@@ -195,15 +195,6 @@ impl ActiveState {
         let _span = tracy_client::span!("draw");
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
-        //// TODO: This is correct?
-        //raw_input.viewports.values_mut().for_each(|viewport| {
-        //    egui_winit::update_viewport_info(
-        //        viewport,
-        //        self.egui_state.egui_ctx(),
-        //        &self.window,
-        //    );
-        //});
-
         let ctx = self.egui_state.egui_ctx();
         let output = ctx.run(raw_input, |ctx| state.view(ctx));
 
@@ -285,8 +276,6 @@ impl AppState {
         egui::TopBottomPanel::top("menu-bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| self.menu_bar(ui));
         });
-
-        //self.setup_screen(ctx);
 
         let Some(emu_state) = &mut self.emulation_state else {
             egui::CentralPanel::default().show(ctx, |ui| {
