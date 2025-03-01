@@ -173,9 +173,9 @@ impl ActiveState {
             egui_ctx,
             egui::ViewportId::ROOT,
             &window,
-            None, // TODO: Is this the scale factor?
-            None, // TODO: What is this?
-            None, // TODO: And what is this?
+            Some(window.scale_factor() as f32),
+            elwt.system_theme(),
+            None,
         );
 
         Ok(Self {
@@ -198,7 +198,7 @@ impl ActiveState {
         let ctx = self.egui_state.egui_ctx();
         let output = ctx.run(raw_input, |ctx| state.view(ctx));
 
-        let pixels_per_point = 1.0;
+        let pixels_per_point = self.window.scale_factor() as f32 * ctx.zoom_factor();
 
         let primitives = ctx.tessellate(output.shapes, pixels_per_point);
         self.renderer
