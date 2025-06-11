@@ -616,73 +616,53 @@ impl Cpu {
         }
     }
 
-    fn alloc_stack(&mut self, n: u8, old: bool) -> Pointer {
-        if old && self.regs.p.e {
-            let sl = self.regs.s.getl();
-            self.regs.s.setl(sl.wrapping_sub(n));
-            Pointer::new8(0, 1, sl)
-        } else {
-            let s = self.regs.s.get();
-            self.regs.s.set(s.wrapping_sub(u16::from(n)));
-            Pointer::new16(0, s)
-        }
-    }
-
-    fn dealloc_stack(&mut self, n: u8, old: bool) -> Pointer {
-        if old && self.regs.p.e {
-            let sl = self.regs.s.getl().wrapping_add(n);
-            self.regs.s.setl(sl);
-            Pointer::new8(0, 1, sl)
-        } else {
-            let s = self.regs.s.get().wrapping_add(u16::from(n));
-            self.regs.s.set(s);
-            Pointer::new16(0, s)
-        }
-    }
-
     fn push8old(&mut self, bus: &mut Bus, value: u8) {
-        let pointer = self.alloc_stack(1, true);
-        bus.write(pointer.at(0), value);
+        bus.write(self.regs.s.get().into(), value);
+        if self.regs.p.e {
+            self.regs.s.setl(self.regs.s.getl().wrapping_sub(1))
+        } else {
+            self.regs.s.set(self.regs.s.get().wrapping_sub(1))
+        }
     }
 
     fn push8new(&mut self, bus: &mut Bus, value: u8) {
-        let pointer = self.alloc_stack(1, false);
-        bus.write(pointer.at(0), value);
+        bus.write(self.regs.s.get().into(), value);
+        self.regs.s.set(self.regs.s.get().wrapping_sub(1));
     }
 
     fn push16old(&mut self, bus: &mut Bus, value: u16) {
-        let pointer = self.alloc_stack(2, true);
-        bus.write(pointer.at(0), (value >> 8) as u8);
-        bus.write(pointer.at(-1), value as u8);
+        self.push8old(bus, (value >> 8) as u8);
+        self.push8old(bus, value as u8);
     }
 
     fn push16new(&mut self, bus: &mut Bus, value: u16) {
-        let pointer = self.alloc_stack(2, false);
-        bus.write(pointer.at(0), (value >> 8) as u8);
-        bus.write(pointer.at(-1), value as u8);
+        self.push8new(bus, (value >> 8) as u8);
+        self.push8new(bus, value as u8);
     }
 
     fn pull8old(&mut self, bus: &mut Bus) -> u8 {
-        let pointer = self.dealloc_stack(1, true);
-        bus.read(pointer.at(0))
+        if self.regs.p.e {
+            self.regs.s.setl(self.regs.s.getl().wrapping_add(1));
+        } else {
+            self.regs.s.set(self.regs.s.get().wrapping_add(1));
+        }
+        bus.read(self.regs.s.get().into())
     }
 
     fn pull8new(&mut self, bus: &mut Bus) -> u8 {
-        let pointer = self.dealloc_stack(1, false);
-        bus.read(pointer.at(0))
+        self.regs.s.set(self.regs.s.get().wrapping_add(1));
+        bus.read(self.regs.s.get().into())
     }
 
     fn pull16old(&mut self, bus: &mut Bus) -> u16 {
-        let pointer = self.dealloc_stack(2, true);
-        let hh = bus.read(pointer.at(0)) as u16;
-        let ll = bus.read(pointer.at(-1)) as u16;
+        let ll = self.pull8old(bus) as u16;
+        let hh = self.pull8old(bus) as u16;
         hh << 8 | ll
     }
 
     fn pull16new(&mut self, bus: &mut Bus) -> u16 {
-        let pointer = self.dealloc_stack(2, false);
-        let hh = bus.read(pointer.at(0)) as u16;
-        let ll = bus.read(pointer.at(-1)) as u16;
+        let ll = self.pull8new(bus) as u16;
+        let hh = self.pull8new(bus) as u16;
         hh << 8 | ll
     }
 
