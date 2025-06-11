@@ -1509,7 +1509,6 @@ impl Cpu {
     }
 
     fn inst_pei(&mut self, bus: &mut Bus) {
-        // FIXME: Is "DirectNew" correct here or should it be "DirectOld"?
         let op = self.read_operand(bus, AddressingMode::DirectNew);
         let value = self.get_operand_u16(bus, op);
         self.push16new(bus, value);
@@ -1537,7 +1536,6 @@ impl Cpu {
             self.regs.p.n = value & 0x80 != 0;
             self.regs.p.z = value == 0;
         } else {
-            // FIXME: is this old or new (since it's a 16 bit operation)?
             let value = self.pull16old(bus);
             self.set_operand_u16(bus, op, value);
             self.regs.p.n = value & 0x8000 != 0;
