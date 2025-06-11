@@ -759,7 +759,7 @@ impl Cpu {
                 let pointer_ll = self.next_instr_byte(bus) as u16;
                 let pointer_hh = self.next_instr_byte(bus) as u16;
 
-                let pointer_lo = pointer_ll << 8 | pointer_hh;
+                let pointer_lo = pointer_hh << 8 | pointer_ll;
                 let pointer_hi = pointer_lo.wrapping_add(1);
 
                 let data_ll = bus.read(pointer_lo as u32) as u16;
