@@ -723,16 +723,16 @@ impl PpuIo {
                 self.backgrounds.direct_color = value & 0x01 != 0;
                 self.screens.sub_screen_bg_obj_enable = value & 0x02 != 0;
                 self.windows.sub_screen_black = match value >> 4 & 0x03 {
-                    0 => MathEnable::Always,
-                    1 => MathEnable::InsideWindow,
-                    2 => MathEnable::OutsideWindow,
-                    3 => MathEnable::Never,
+                    0 => MathEnable::Never,
+                    1 => MathEnable::OutsideWindow,
+                    2 => MathEnable::InsideWindow,
+                    3 => MathEnable::Always,
                     _ => unreachable!(),
                 };
                 self.windows.main_screen_black = match value >> 6 & 0x03 {
                     0 => MathEnable::Never,
-                    1 => MathEnable::InsideWindow,
-                    2 => MathEnable::OutsideWindow,
+                    1 => MathEnable::OutsideWindow,
+                    2 => MathEnable::InsideWindow,
                     3 => MathEnable::Always,
                     _ => unreachable!(),
                 };
