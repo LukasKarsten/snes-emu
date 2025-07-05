@@ -1002,12 +1002,9 @@ impl Cpu {
             } else {
                 result += (al & 0x0F) + (value & 0x0F);
                 if result <= 0x0F {
-                    result = result.wrapping_sub(0x06);
+                    result = result.wrapping_sub(0x06) & 0x0F;
                 }
-                result = (result & 0x0F)
-                    + (al & 0xF0)
-                    + (value & 0xF0)
-                    + (((result > 0x0F) as u16) << 4);
+                result += (al & 0xF0) + (value & 0xF0);
             }
 
             let overflow = ((!(al ^ value) & (al ^ result)) & 0x80) != 0;
@@ -1029,29 +1026,19 @@ impl Cpu {
             if !self.regs.p.d {
                 result += a + value;
             } else {
-                // TODO: Try to make this as efficient as the ADC implementation
                 result += (a & 0x000F) + (value & 0x000F);
                 if result <= 0x000F {
-                    result = result.wrapping_sub(0x0006);
+                    result = result.wrapping_sub(0x0006) & 0x000F;
                 }
-                result = (result & 0x000F)
-                    + (a & 0x00F0)
-                    + (value & 0x00F0)
-                    + (((result > 0x0F) as u32) << 4);
+                result += (a & 0x00F0) + (value & 0x00F0);
                 if result <= 0x00FF {
-                    result = result.wrapping_sub(0x0060);
+                    result = result.wrapping_sub(0x0060) & 0x00FF;
                 }
-                result = (result & 0x00FF)
-                    + (a & 0x0F00)
-                    + (value & 0x0F00)
-                    + (((result > 0x0F) as u32) << 8);
+                result += (a & 0x0F00) + (value & 0x0F00);
                 if result <= 0x0FFF {
-                    result = result.wrapping_sub(0x0600);
+                    result = result.wrapping_sub(0x0600) & 0x0FFF;
                 }
-                result = (result & 0x0FFF)
-                    + (a & 0xF000)
-                    + (value & 0xF000)
-                    + (((result > 0x0F) as u32) << 12);
+                result += (a & 0xF000) + (value & 0xF000);
             }
 
             let overflow = ((!(a ^ value) & (a ^ result)) & 0x8000) != 0;
