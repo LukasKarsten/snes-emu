@@ -1561,7 +1561,7 @@ impl Cpu {
         let value = self.pull16new(bus);
         self.stack_modified_new();
         self.regs.d.set(value);
-        self.regs.p.n = value & 0x80 != 0;
+        self.regs.p.n = value & 0x8000 != 0;
         self.regs.p.z = value == 0;
     }
 
