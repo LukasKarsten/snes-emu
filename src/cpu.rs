@@ -1608,7 +1608,10 @@ impl Cpu {
     }
 
     fn inst_tcd(&mut self) {
-        self.regs.d.set(self.regs.a.get());
+        let value = self.regs.a.get();
+        self.regs.d.set(value);
+        self.regs.p.n = value & 0x8000 != 0;
+        self.regs.p.z = value == 0;
     }
 
     fn inst_tcs(&mut self) {
@@ -1620,11 +1623,17 @@ impl Cpu {
     }
 
     fn inst_tdc(&mut self) {
-        self.regs.a.set(self.regs.d.get());
+        let value = self.regs.d.get();
+        self.regs.a.set(value);
+        self.regs.p.n = value & 0x8000 != 0;
+        self.regs.p.z = value == 0;
     }
 
     fn inst_tsc(&mut self) {
-        self.regs.a.set(self.regs.s.get());
+        let value = self.regs.s.get();
+        self.regs.a.set(value);
+        self.regs.p.n = value & 0x8000 != 0;
+        self.regs.p.z = value == 0;
     }
 
     fn inst_xba(&mut self) {
