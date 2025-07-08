@@ -1308,6 +1308,7 @@ impl Cpu {
         let ret = self.regs.pc.get().wrapping_add(2);
         self.push16new(bus, ret);
         self.inst_jmp(bus, AddressingMode::Long);
+        self.stack_modified_new();
     }
 
     fn inst_jsr_old(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
@@ -1320,12 +1321,14 @@ impl Cpu {
         let ret = self.regs.pc.get().wrapping_add(1);
         self.push16new(bus, ret);
         self.inst_jmp(bus, addr_mode);
+        self.stack_modified_new();
     }
 
     fn inst_rtl(&mut self, bus: &mut Bus) {
         let pc = self.pull16new(bus);
         self.regs.pc.set(pc.wrapping_add(1));
         self.regs.k = self.pull8new(bus);
+        self.stack_modified_new();
     }
 
     fn inst_rts(&mut self, bus: &mut Bus) {
@@ -1480,17 +1483,20 @@ impl Cpu {
         let hh = self.next_instr_byte(bus) as u16;
         let value = hh << 8 | ll;
         self.push16new(bus, value);
+        self.stack_modified_new();
     }
 
     fn inst_pei(&mut self, bus: &mut Bus) {
         let op = self.read_operand(bus, AddressingMode::DirectNew);
         let value = self.get_operand_u16(bus, op);
         self.push16new(bus, value);
+        self.stack_modified_new();
     }
 
     fn inst_per(&mut self, bus: &mut Bus) {
         let pointer = self.read_pointer(bus, AddressingMode::Relative16);
         self.push16new(bus, pointer.at(0) as u16);
+        self.stack_modified_new();
     }
 
     fn inst_push_reg(&mut self, bus: &mut Bus, op: Operand) {
@@ -1519,14 +1525,17 @@ impl Cpu {
 
     fn inst_phb(&mut self, bus: &mut Bus) {
         self.push8new(bus, self.regs.dbr);
+        self.stack_modified_new();
     }
 
     fn inst_phd(&mut self, bus: &mut Bus) {
         self.push16new(bus, self.regs.d.get());
+        self.stack_modified_new();
     }
 
     fn inst_phk(&mut self, bus: &mut Bus) {
         self.push8new(bus, self.regs.k);
+        self.stack_modified_new();
     }
 
     fn inst_php(&mut self, bus: &mut Bus) {
@@ -1535,6 +1544,7 @@ impl Cpu {
 
     fn inst_plb(&mut self, bus: &mut Bus) {
         let value = self.pull8new(bus);
+        self.stack_modified_new();
         self.regs.dbr = value;
         self.regs.p.n = value & 0x80 != 0;
         self.regs.p.z = value == 0;
@@ -1542,6 +1552,7 @@ impl Cpu {
 
     fn inst_pld(&mut self, bus: &mut Bus) {
         let value = self.pull16new(bus);
+        self.stack_modified_new();
         self.regs.d.set(value);
         self.regs.p.n = value & 0x80 != 0;
         self.regs.p.z = value == 0;
@@ -1624,14 +1635,18 @@ impl Cpu {
         if self.regs.p.e {
             self.regs.p.m = true;
             self.regs.p.xb = true;
-            self.regs.x.seth(0x00);
-            self.regs.y.seth(0x00);
             self.regs.s.seth(0x01);
         }
 
         if self.regs.p.xb {
-            self.regs.x.seth(0);
-            self.regs.y.seth(0);
+            self.regs.x.seth(0x00);
+            self.regs.y.seth(0x00);
+        }
+    }
+
+    fn stack_modified_new(&mut self) {
+        if self.regs.p.e {
+            self.regs.s.seth(0x01);
         }
     }
 
