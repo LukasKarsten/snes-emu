@@ -1466,9 +1466,16 @@ impl Cpu {
         let value = bus.read(src);
         bus.write(dst, value);
 
-        // FIXME: Handle the x and e flags
-        self.regs.x.set(src_offset.wrapping_add_signed(step));
-        self.regs.y.set(dst_offset.wrapping_add_signed(step));
+        let mut next_x = src_offset.wrapping_add_signed(step);
+        let mut next_y = dst_offset.wrapping_add_signed(step);
+
+        if self.regs.p.xb {
+            next_x &= 0xFF;
+            next_y &= 0xFF;
+        }
+
+        self.regs.x.set(next_x);
+        self.regs.y.set(next_y);
 
         let remaining = self.regs.a.get().wrapping_sub(1);
         self.regs.a.set(remaining);
