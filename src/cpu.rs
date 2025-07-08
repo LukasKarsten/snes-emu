@@ -1310,9 +1310,15 @@ impl Cpu {
         self.inst_jmp(bus, AddressingMode::Long);
     }
 
-    fn inst_jsr(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
+    fn inst_jsr_old(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
         let ret = self.regs.pc.get().wrapping_add(1);
         self.push16old(bus, ret);
+        self.inst_jmp(bus, addr_mode);
+    }
+
+    fn inst_jsr_new(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
+        let ret = self.regs.pc.get().wrapping_add(1);
+        self.push16new(bus, ret);
         self.inst_jmp(bus, addr_mode);
     }
 
@@ -1943,8 +1949,8 @@ impl Cpu {
             // JSL
             0x22 => self.inst_jsl(bus),
             // JSR
-            0x20 => self.inst_jsr(bus, AddressingMode::AbsoluteJmp),
-            0xFC => self.inst_jsr(bus, AddressingMode::AbsoluteXParensJmp),
+            0x20 => self.inst_jsr_old(bus, AddressingMode::AbsoluteJmp),
+            0xFC => self.inst_jsr_new(bus, AddressingMode::AbsoluteXParensJmp),
             // RTL
             0x6B => self.inst_rtl(bus),
             // RTS
