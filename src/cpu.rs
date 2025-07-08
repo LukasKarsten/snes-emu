@@ -1323,7 +1323,8 @@ impl Cpu {
     }
 
     fn inst_rtl(&mut self, bus: &mut Bus) {
-        self.inst_rts(bus);
+        let pc = self.pull16new(bus);
+        self.regs.pc.set(pc.wrapping_add(1));
         self.regs.k = self.pull8new(bus);
     }
 
