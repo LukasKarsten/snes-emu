@@ -1612,7 +1612,11 @@ impl Cpu {
     }
 
     fn inst_tcs(&mut self) {
-        self.regs.s.set(self.regs.a.get());
+        if self.regs.p.e {
+            self.regs.s.setl(self.regs.a.getl());
+        } else {
+            self.regs.s.set(self.regs.a.get());
+        }
     }
 
     fn inst_tdc(&mut self) {
