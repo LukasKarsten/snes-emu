@@ -874,9 +874,9 @@ impl Ppu {
                 emu.ppu.vpos += 1;
 
                 if emu.ppu.vpos == 2 {
-                    emu.cpu_io.set_vblank_nmi_flag(false);
+                    emu.cpu.set_vblank_nmi_flag(false);
                 } else if emu.ppu.vpos == height + 1 {
-                    emu.cpu_io.set_vblank_nmi_flag(true);
+                    emu.cpu.set_vblank_nmi_flag(true);
                 }
 
                 if emu.ppu.vpos > screen_height + 37 {
@@ -887,17 +887,17 @@ impl Ppu {
             let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos > 277;
             let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos > height;
 
-            emu.cpu_io.hvbjoy_hblank_period_flag = hblank;
-            emu.cpu_io.hvbjoy_vblank_period_flag = vblank;
+            emu.cpu.hvbjoy_hblank_period_flag = hblank;
+            emu.cpu.hvbjoy_vblank_period_flag = vblank;
 
-            let h_irq = emu.ppu.hpos == emu.cpu_io.htime.value();
-            let v_irq = emu.ppu.vpos == emu.cpu_io.vtime.value();
+            let h_irq = emu.ppu.hpos == emu.cpu.htime.value();
+            let v_irq = emu.ppu.vpos == emu.cpu.vtime.value();
             // PERF: We could eliminate this match with some bit fiddling
-            match emu.cpu_io.nmitimen_hv_irq {
+            match emu.cpu.nmitimen_hv_irq {
                 crate::cpu::HvIrq::Disable => (),
-                crate::cpu::HvIrq::Horizontal => emu.cpu_io.timeup_hv_count_timer_irq_flag = h_irq,
-                crate::cpu::HvIrq::Vertical => emu.cpu_io.timeup_hv_count_timer_irq_flag = v_irq,
-                crate::cpu::HvIrq::End => emu.cpu_io.timeup_hv_count_timer_irq_flag = h_irq & v_irq,
+                crate::cpu::HvIrq::Horizontal => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq,
+                crate::cpu::HvIrq::Vertical => emu.cpu.timeup_hv_count_timer_irq_flag = v_irq,
+                crate::cpu::HvIrq::End => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq & v_irq,
             }
 
             if !hblank && !vblank {

@@ -2,7 +2,7 @@ use cpu::StepResult;
 use input::InputDevice;
 
 pub use apu::{Apu, ApuIo};
-pub use cpu::{Cpu, CpuIo};
+pub use cpu::Cpu;
 pub use dma::Dma;
 pub use joypad::JoypadIo;
 pub use ppu::{OutputImage, Ppu};
@@ -45,7 +45,6 @@ pub struct Snes {
     wram: WRam,
     sram: Box<[u8; 0x080000]>,
     rom: Box<[u8]>,
-    pub cpu_io: CpuIo,
     pub apu_io: ApuIo,
     joypad: JoypadIo,
     pub dma: Dma,
@@ -62,13 +61,12 @@ impl Snes {
             wram: WRam::default(),
             sram: vec![0; 0x080000].try_into().unwrap(),
             rom,
-            cpu_io: CpuIo::default(),
             apu_io: ApuIo::default(),
             joypad: JoypadIo::default(),
             dma: Dma::default(),
             mdr: 0,
         };
-        snes.cpu_io.raise_interrupt(cpu::Interrupt::Reset);
+        snes.cpu.raise_interrupt(cpu::Interrupt::Reset);
         snes
     }
 
@@ -92,7 +90,7 @@ impl Snes {
     pub fn run(&mut self) -> bool {
         let mut ignore_breakpoints = true;
 
-        if self.cpu_io.nmitimen_joypad_enable {
+        if self.cpu.nmitimen_joypad_enable {
             fn read_input(
                 input: &mut Option<Box<dyn InputDevice>>,
                 joy1l: &mut u8,
@@ -121,19 +119,19 @@ impl Snes {
 
             read_input(
                 &mut self.joypad.input1,
-                &mut self.cpu_io.joy1l,
-                &mut self.cpu_io.joy1h,
-                &mut self.cpu_io.joy2l,
-                &mut self.cpu_io.joy2h,
+                &mut self.cpu.joy1l,
+                &mut self.cpu.joy1h,
+                &mut self.cpu.joy2l,
+                &mut self.cpu.joy2h,
             );
             read_input(
                 &mut self.joypad.input2,
-                &mut self.cpu_io.joy3l,
-                &mut self.cpu_io.joy3h,
-                &mut self.cpu_io.joy4l,
-                &mut self.cpu_io.joy4h,
+                &mut self.cpu.joy3l,
+                &mut self.cpu.joy3h,
+                &mut self.cpu.joy4l,
+                &mut self.cpu.joy4h,
             );
-            self.cpu_io.hvbjoy_auto_joypad_read_busy_flag = false;
+            self.cpu.hvbjoy_auto_joypad_read_busy_flag = false;
         }
 
         loop {
@@ -241,7 +239,7 @@ impl Snes {
             BusDevice::Apu => self.apu_io.cpu_read_pure(device_addr as u16),
             BusDevice::WRamAccess => self.wram.read_pure(device_addr),
             BusDevice::Joypad => self.joypad.read_pure(device_addr),
-            BusDevice::CpuIo => self.cpu_io.read_pure(device_addr),
+            BusDevice::CpuIo => self.cpu.read_pure(device_addr),
             BusDevice::Dma => self.dma.read_pure(device_addr),
             BusDevice::Rom => {
                 // TODO: Implement correct wrapping behaviour
@@ -280,7 +278,7 @@ impl Snes {
                 .read(device_addr)
                 .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (JOYPAD)")),
             BusDevice::CpuIo => self
-                .cpu_io
+                .cpu
                 .read(device_addr)
                 .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (CPUIO)")),
             BusDevice::Dma => self
@@ -317,7 +315,7 @@ impl Snes {
             BusDevice::Apu => self.apu_io.cpu_write(device_addr as u16, value),
             BusDevice::WRamAccess => self.wram.write(device_addr, value),
             BusDevice::Joypad => self.joypad.write(device_addr, value),
-            BusDevice::CpuIo => self.cpu_io.write(device_addr, value),
+            BusDevice::CpuIo => self.cpu.write(device_addr, value),
             BusDevice::Dma => self.dma.write(device_addr, value),
             BusDevice::Rom => (),
             BusDevice::SRam => self.sram[device_addr as usize] = value,

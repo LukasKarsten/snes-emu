@@ -257,7 +257,33 @@ pub enum HvIrq {
     End,
 }
 
-pub struct CpuIo {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepResult {
+    Stepped,
+    BreakpointHit,
+}
+
+pub struct CpuDebug {
+    pub execution_history: Box<[crate::disasm::Instruction]>,
+    pub execution_history_pos: usize,
+    pub breakpoints: Vec<u32>,
+    pub encountered_instructions: Box<[Option<crate::disasm::Instruction>; 0x1000000]>,
+}
+
+impl Default for CpuDebug {
+    fn default() -> Self {
+        Self {
+            execution_history: vec![crate::disasm::Instruction::default(); 256].into_boxed_slice(),
+            execution_history_pos: 0,
+            breakpoints: Vec::new(),
+            encountered_instructions: vec![None; 0x1000000]
+                .try_into()
+                .unwrap_or_else(|_| panic!()),
+        }
+    }
+}
+
+pub struct Cpu {
     // write-only
     pub nmitimen_vblank_nmi_enable: bool,
     pub nmitimen_hv_irq: HvIrq,
@@ -274,6 +300,7 @@ pub struct CpuIo {
     pub mdmaen: u8,
     pub hdmaen: u8,
     pub memsel: u8,
+
     // read-only
     pub rdnmi_vblank_nmi_flag: bool,
     pub rdnmi_cpu_version_number: u4,
@@ -294,13 +321,17 @@ pub struct CpuIo {
     pub joy3h: u8,
     pub joy4l: u8,
     pub joy4h: u8,
-    // read/write
-    // internal
+
+    pub regs: Registers,
     nmi_pending: bool,
     pending_interrupts: u8,
+    dma_counter: u8,
+    stopped: bool,
+    waiting: bool,
+    pub debug: CpuDebug,
 }
 
-impl Default for CpuIo {
+impl Default for Cpu {
     fn default() -> Self {
         Self {
             nmitimen_vblank_nmi_enable: false,
@@ -337,13 +368,18 @@ impl Default for CpuIo {
             joy3h: 0x00,
             joy4l: 0x00,
             joy4h: 0x00,
+            regs: Registers::default(),
             nmi_pending: false,
             pending_interrupts: 0,
+            dma_counter: 0,
+            stopped: false,
+            waiting: false,
+            debug: CpuDebug::default(),
         }
     }
 }
 
-impl CpuIo {
+impl Cpu {
     pub fn raise_interrupt(&mut self, interrupt: Interrupt) {
         self.pending_interrupts |= 1 << interrupt as u8;
     }
@@ -510,41 +546,6 @@ impl CpuIo {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepResult {
-    Stepped,
-    BreakpointHit,
-}
-
-pub struct CpuDebug {
-    pub execution_history: Box<[crate::disasm::Instruction]>,
-    pub execution_history_pos: usize,
-    pub breakpoints: Vec<u32>,
-    pub encountered_instructions: Box<[Option<crate::disasm::Instruction>; 0x1000000]>,
-}
-
-impl Default for CpuDebug {
-    fn default() -> Self {
-        Self {
-            execution_history: vec![crate::disasm::Instruction::default(); 256].into_boxed_slice(),
-            execution_history_pos: 0,
-            breakpoints: Vec::new(),
-            encountered_instructions: vec![None; 0x1000000]
-                .try_into()
-                .unwrap_or_else(|_| panic!()),
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct Cpu {
-    pub regs: Registers,
-    dma_counter: u8,
-    stopped: bool,
-    waiting: bool,
-    pub debug: CpuDebug,
-}
-
 fn next_instr_byte(emu: &mut Snes) -> u8 {
     let pc = emu.cpu.regs.pc.get();
     emu.cpu.regs.pc.set(pc.wrapping_add(1));
@@ -665,7 +666,7 @@ fn int_reset(emu: &mut Snes) {
     // FIXME: should this happen before or after resetting the registers?
     enter_interrupt_handler(emu, Interrupt::Reset);
 
-    emu.cpu_io.reset();
+    emu.cpu.reset();
     emu.ppu.reset();
     emu.apu_io.reset();
 }
@@ -1673,7 +1674,7 @@ fn process_dma(emu: &mut Snes) -> StepResult {
 
     // FIXME: What exactly happens when the last unit is only written partially?
 
-    let idx = emu.cpu_io.mdmaen.trailing_zeros() as usize;
+    let idx = emu.cpu.mdmaen.trailing_zeros() as usize;
     let mut channel = &mut emu.dma.channels[idx];
 
     if channel.das > 0 {
@@ -1717,7 +1718,7 @@ fn process_dma(emu: &mut Snes) -> StepResult {
 
     if channel.das == 0 {
         emu.cpu.dma_counter = 0;
-        emu.cpu_io.mdmaen ^= 1 << idx;
+        emu.cpu.mdmaen ^= 1 << idx;
     }
 
     return StepResult::Stepped;
@@ -1727,12 +1728,12 @@ fn process_dma(emu: &mut Snes) -> StepResult {
 fn process_interrupt(emu: &mut Snes) {
     let mask = !(((emu.cpu.regs.p.i & !emu.cpu.waiting) as u8) << INT_IRQ);
 
-    let interrupt = (emu.cpu_io.pending_interrupts & mask).trailing_zeros();
+    let interrupt = (emu.cpu.pending_interrupts & mask).trailing_zeros();
     if interrupt >= u8::BITS {
         return;
     }
 
-    emu.cpu_io.pending_interrupts &= !(1 << interrupt);
+    emu.cpu.pending_interrupts &= !(1 << interrupt);
 
     match interrupt as u8 {
         INT_RESET => int_reset(emu),
@@ -1750,7 +1751,7 @@ fn process_interrupt(emu: &mut Snes) {
 }
 
 pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
-    if emu.cpu_io.mdmaen != 0 {
+    if emu.cpu.mdmaen != 0 {
         return process_dma(emu);
     }
 
@@ -1758,11 +1759,11 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
         return StepResult::Stepped;
     }
 
-    emu.cpu_io.pending_interrupts |= (emu.cpu_io.nmi_pending as u8) << INT_NMI;
-    emu.cpu_io.pending_interrupts |= (emu.cpu_io.timeup_hv_count_timer_irq_flag as u8) << INT_IRQ;
-    emu.cpu_io.nmi_pending = false;
+    emu.cpu.pending_interrupts |= (emu.cpu.nmi_pending as u8) << INT_NMI;
+    emu.cpu.pending_interrupts |= (emu.cpu.timeup_hv_count_timer_irq_flag as u8) << INT_IRQ;
+    emu.cpu.nmi_pending = false;
 
-    if emu.cpu_io.pending_interrupts != 0 {
+    if emu.cpu.pending_interrupts != 0 {
         process_interrupt(emu);
         emu.cpu.waiting = false;
     }

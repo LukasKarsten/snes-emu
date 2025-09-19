@@ -84,16 +84,16 @@ impl Tab for CpuTab {
                 });
 
                 ui.horizontal(|ui| {
-                    let cpuio = &mut emulation_state.snes.cpu_io;
+                    let cpu = &mut emulation_state.snes.cpu;
 
                     if ui.button("Reset").clicked() {
-                        cpuio.raise_interrupt(snes_emu::cpu::Interrupt::Reset);
+                        cpu.raise_interrupt(snes_emu::cpu::Interrupt::Reset);
                     }
                     if ui.button("IRQ").clicked() {
-                        cpuio.raise_interrupt(snes_emu::cpu::Interrupt::Irq);
+                        cpu.raise_interrupt(snes_emu::cpu::Interrupt::Irq);
                     }
                     if ui.button("NMI").clicked() {
-                        cpuio.raise_interrupt(snes_emu::cpu::Interrupt::Nmi);
+                        cpu.raise_interrupt(snes_emu::cpu::Interrupt::Nmi);
                     }
                 });
             });
@@ -191,20 +191,20 @@ impl Tab for CpuTab {
             });
 
             ui.vertical(|ui| {
-                let cpuio = &mut emulation_state.snes.cpu_io;
+                let cpu = &mut emulation_state.snes.cpu;
 
-                ui.checkbox(&mut cpuio.nmitimen_vblank_nmi_enable, "VBlank NMI Enable");
+                ui.checkbox(&mut cpu.nmitimen_vblank_nmi_enable, "VBlank NMI Enable");
                 enum_combobox!(
                     ui,
-                    "cpuio-nmitimen-hv-irq",
+                    "cpu-nmitimen-hv-irq",
                     "HV IRQ",
-                    &mut cpuio.nmitimen_hv_irq,
+                    &mut cpu.nmitimen_hv_irq,
                     HvIrq::Disable => "Disabled",
                     HvIrq::Horizontal => "Horizontal",
                     HvIrq::Vertical => "Vertical",
                     HvIrq::End => "End"
                 );
-                ui.checkbox(&mut cpuio.nmitimen_joypad_enable, "Joypad Enable");
+                ui.checkbox(&mut cpu.nmitimen_joypad_enable, "Joypad Enable");
             });
         });
     }
