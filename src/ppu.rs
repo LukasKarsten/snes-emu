@@ -253,7 +253,7 @@ impl OutputImage {
     }
 }
 
-pub struct PpuIo {
+pub struct Ppu {
     ////////////////////////////////////////////////////////////////////////////
     // write-only
     pub backgrounds: Backgrounds,
@@ -322,9 +322,14 @@ pub struct PpuIo {
     m7_old: u8,
     ophct_selector: u8,
     opvct_selector: u8,
+
+    pending_cycles: u64,
+    pub hpos: u16,
+    pub vpos: u16,
+    output: OutputImage,
 }
 
-impl Default for PpuIo {
+impl Default for Ppu {
     fn default() -> Self {
         Self {
             backgrounds: Backgrounds::default(),
@@ -380,11 +385,16 @@ impl Default for PpuIo {
             m7_old: 0,
             ophct_selector: 0,
             opvct_selector: 0,
+
+            pending_cycles: 0,
+            hpos: 0,
+            vpos: 0,
+            output: OutputImage::default(),
         }
     }
 }
 
-impl PpuIo {
+impl Ppu {
     pub fn read_pure(&self, addr: u32) -> Option<u8> {
         let value = match addr {
             0x2134 => self.mpyl,
@@ -820,27 +830,7 @@ impl PpuIo {
             true => 239,
         }
     }
-}
 
-pub struct Ppu {
-    pending_cycles: u64,
-    pub hpos: u16,
-    pub vpos: u16,
-    output: OutputImage,
-}
-
-impl Default for Ppu {
-    fn default() -> Self {
-        Self {
-            pending_cycles: 0,
-            hpos: 0,
-            vpos: 0,
-            output: OutputImage::default(),
-        }
-    }
-}
-
-impl Ppu {
     pub fn output(&self) -> &OutputImage {
         &self.output
     }
@@ -862,16 +852,16 @@ impl Ppu {
         };
         */
 
-        let height = emu.ppu_io.output_height();
+        let height = emu.ppu.output_height();
 
         // TODO: This is not acutally dependent on the height but rather whether the console is a NTSC
         // or PAL console. (at least I think so ..)
         let screen_height = height;
 
-        if emu.ppu_io.setini_interlace {
+        if emu.ppu.setini_interlace {
             todo!()
         }
-        if emu.ppu_io.setini_hpseudo512 {
+        if emu.ppu.setini_hpseudo512 {
             todo!()
         }
 
@@ -914,8 +904,8 @@ impl Ppu {
                 let x = emu.ppu.hpos - 22;
                 let y = emu.ppu.vpos - 1;
 
-                let color = match emu.ppu_io.inidisp_forced_blanking {
-                    false => emu.ppu.render_pixel(&emu.ppu_io, x, y),
+                let color = match emu.ppu.inidisp_forced_blanking {
+                    false => emu.ppu.render_pixel(x, y),
                     true => OutputColor::BLACK,
                 };
 
@@ -933,18 +923,18 @@ impl Ppu {
         false
     }
 
-    fn render_pixel(&self, io: &PpuIo, x: u16, y: u16) -> OutputColor {
-        let mode = io.backgrounds.mode.value();
+    fn render_pixel(&self, x: u16, y: u16) -> OutputColor {
+        let mode = self.backgrounds.mode.value();
         if mode == 7 {
             todo!()
         }
         let mode_def = &ModeDefinition::MODES[usize::from(mode)];
 
-        let window = self.compute_window_mask(io, x);
+        let window = self.compute_window_mask(x);
 
-        let colors = self.get_layer_colors(io, x, y, mode_def);
-        let main_layers = io.screens.tm & !(window & io.windows.tmw);
-        let sub_layers = io.screens.ts & !(window & io.windows.tsw);
+        let colors = self.get_layer_colors(x, y, mode_def);
+        let main_layers = self.screens.tm & !(window & self.windows.tmw);
+        let sub_layers = self.screens.ts & !(window & self.windows.tsw);
 
         fn select_color(
             colors: &[LayerColor; NUM_LAYERS],
@@ -971,43 +961,44 @@ impl Ppu {
             (colors[layer as usize].color, layer)
         }
 
-        let bg3_high_priority = mode == 1 && io.backgrounds.bg3_high_priority;
+        let bg3_high_priority = mode == 1 && self.backgrounds.bg3_high_priority;
         let (mut main_color, main_layer) = select_color(&colors, main_layers, bg3_high_priority);
 
         let window_math_enabled = (window & WINDOW_MATH) == 0;
         let enable_screen_lut = [false, window_math_enabled, !window_math_enabled, true];
 
-        let enable_main_screen = enable_screen_lut[usize::from(io.windows.main_screen_black as u8)];
+        let enable_main_screen =
+            enable_screen_lut[usize::from(self.windows.main_screen_black as u8)];
 
         if !enable_main_screen {
             main_color = Color::BLACK;
         }
 
         let math_enabled = match main_layer {
-            LAYER_BG1 => io.screens.math_on_backgrounds[0],
-            LAYER_BG2 => io.screens.math_on_backgrounds[1],
-            LAYER_BG3 => io.screens.math_on_backgrounds[2],
-            LAYER_BG4 => io.screens.math_on_backgrounds[3],
-            LAYER_OBJ => io.screens.math_on_objects,
-            _ => io.screens.math_on_backdrop,
+            LAYER_BG1 => self.screens.math_on_backgrounds[0],
+            LAYER_BG2 => self.screens.math_on_backgrounds[1],
+            LAYER_BG3 => self.screens.math_on_backgrounds[2],
+            LAYER_BG4 => self.screens.math_on_backgrounds[3],
+            LAYER_OBJ => self.screens.math_on_objects,
+            _ => self.screens.math_on_backdrop,
         };
 
         if !math_enabled {
             return OutputColor::from_rgb(main_color.r, main_color.g, main_color.b);
         }
 
-        let enable_sub_screen = enable_screen_lut[usize::from(io.windows.sub_screen_black as u8)];
+        let enable_sub_screen = enable_screen_lut[usize::from(self.windows.sub_screen_black as u8)];
 
         let mut sub_color = Color::BLACK;
         let mut sub_layer = LAYER_BACKDROP;
         if enable_sub_screen {
-            (sub_color, sub_layer) = match io.screens.sub_screen_bg_obj_enable {
+            (sub_color, sub_layer) = match self.screens.sub_screen_bg_obj_enable {
                 true => select_color(&colors, sub_layers, bg3_high_priority),
                 false => (
                     Color::new(
-                        io.screens.backdrop_red,
-                        io.screens.backdrop_green,
-                        io.screens.backdrop_blue,
+                        self.screens.backdrop_red,
+                        self.screens.backdrop_green,
+                        self.screens.backdrop_blue,
                     ),
                     0xFF,
                 ),
@@ -1020,7 +1011,7 @@ impl Ppu {
             sub_color.b.value() as i8,
         ];
 
-        if io.screens.math_operation == MathOperation::Sub {
+        if self.screens.math_operation == MathOperation::Sub {
             output.map(std::ops::Neg::neg);
         }
 
@@ -1028,7 +1019,7 @@ impl Ppu {
         output[1] += main_color.g.value() as i8;
         output[2] += main_color.b.value() as i8;
 
-        if io.screens.half && enable_main_screen && sub_layer != LAYER_BACKDROP {
+        if self.screens.half && enable_main_screen && sub_layer != LAYER_BACKDROP {
             output = output.map(|v| v / 2);
         }
 
@@ -1041,19 +1032,19 @@ impl Ppu {
         )
     }
 
-    fn compute_window_mask(&self, io: &PpuIo, x: u16) -> u8 {
-        let pos = (x >> io.setini_hpseudo512 as u8) as u8;
-        let outside_w1 = pos < io.windows.window1_left || pos > io.windows.window1_right;
-        let outside_w2 = pos < io.windows.window2_left || pos > io.windows.window2_right;
+    fn compute_window_mask(&self, x: u16) -> u8 {
+        let pos = (x >> self.setini_hpseudo512 as u8) as u8;
+        let outside_w1 = pos < self.windows.window1_left || pos > self.windows.window1_right;
+        let outside_w2 = pos < self.windows.window2_left || pos > self.windows.window2_right;
 
         let mut w1 = (outside_w1 as u8).wrapping_sub(1);
         let mut w2 = (outside_w2 as u8).wrapping_sub(1);
 
-        w1 &= io.windows.w1en;
-        w2 &= io.windows.w2en;
+        w1 &= self.windows.w1en;
+        w2 &= self.windows.w2en;
 
-        w1 ^= io.windows.w1inv;
-        w2 ^= io.windows.w2inv;
+        w1 ^= self.windows.w1inv;
+        w2 ^= self.windows.w2inv;
 
         let or = w1 | w2;
         let and = w1 & w2;
@@ -1062,43 +1053,35 @@ impl Ppu {
 
         // PERF: pre-compute these masks
         let mut masks = [0; 4];
-        masks[io.windows.backgrounds[0] as usize] |= WINDOW_BG1;
-        masks[io.windows.backgrounds[1] as usize] |= WINDOW_BG2;
-        masks[io.windows.backgrounds[2] as usize] |= WINDOW_BG3;
-        masks[io.windows.backgrounds[3] as usize] |= WINDOW_BG4;
-        masks[io.windows.objects as usize] |= WINDOW_OBJ;
-        masks[io.windows.math as usize] |= WINDOW_MATH;
+        masks[self.windows.backgrounds[0] as usize] |= WINDOW_BG1;
+        masks[self.windows.backgrounds[1] as usize] |= WINDOW_BG2;
+        masks[self.windows.backgrounds[2] as usize] |= WINDOW_BG3;
+        masks[self.windows.backgrounds[3] as usize] |= WINDOW_BG4;
+        masks[self.windows.objects as usize] |= WINDOW_OBJ;
+        masks[self.windows.math as usize] |= WINDOW_MATH;
 
         (or & masks[0]) | (and & masks[1]) | (xor & masks[2]) | (xnor & masks[3])
     }
 
     fn get_layer_colors(
         &self,
-        io: &PpuIo,
         x: u16,
         y: u16,
         mode_def: &ModeDefinition,
     ) -> [LayerColor; NUM_LAYERS] {
         let mut colors = [LayerColor::TRANSPARENT; NUM_LAYERS];
-        colors[LAYER_BACKDROP as usize] = LayerColor::new(self.get_color(io, 0), 0);
+        colors[LAYER_BACKDROP as usize] = LayerColor::new(self.get_color(0), 0);
 
         for i in 0..usize::from(mode_def.num_backgrounds) {
-            colors[i] = self.get_bg_color(io, x, y, i, mode_def);
+            colors[i] = self.get_bg_color(x, y, i, mode_def);
         }
 
         colors
     }
 
     #[inline(never)]
-    fn get_bg_color(
-        &self,
-        io: &PpuIo,
-        x: u16,
-        y: u16,
-        bg_num: usize,
-        mode_def: &ModeDefinition,
-    ) -> LayerColor {
-        let bg = &io.backgrounds.backgrounds[bg_num];
+    fn get_bg_color(&self, x: u16, y: u16, bg_num: usize, mode_def: &ModeDefinition) -> LayerColor {
+        let bg = &self.backgrounds.backgrounds[bg_num];
 
         // screens in the order: top left, top right, bottom left, bottom right
         let screens: [u8; 4] =
@@ -1122,7 +1105,6 @@ impl Ppu {
         let bpp = mode_def.bpp[bg_num] as u16;
         let palette_offset = mode_def.palette_offset[bg_num];
         self.get_screen_color(
-            io,
             bg,
             screen,
             tile_idx,
@@ -1136,7 +1118,6 @@ impl Ppu {
 
     fn get_screen_color(
         &self,
-        io: &PpuIo,
         bg: &Background,
         screen: u8,
         tile_idx: u16,
@@ -1148,8 +1129,8 @@ impl Ppu {
     ) -> LayerColor {
         let tilemap_addr = ((bg.base_address.value() + screen) as u16) << 10; // * 1024
         let map_entry_addr = tilemap_addr.wrapping_add(tile_idx) << 1;
-        let map_entry_lo = io.vram[usize::from(map_entry_addr + 0)];
-        let map_entry_hi = io.vram[usize::from(map_entry_addr + 1)];
+        let map_entry_lo = self.vram[usize::from(map_entry_addr + 0)];
+        let map_entry_hi = self.vram[usize::from(map_entry_addr + 1)];
         let map_entry = (map_entry_lo as u16) | (map_entry_hi as u16) << 8;
 
         let tile_size = 8 << (bg.large_tiles as u8);
@@ -1181,8 +1162,8 @@ impl Ppu {
             let plane_pair_addr = tile_addr
                 .wrapping_add((tile_off_y & 0x07) * 2)
                 .wrapping_add(plane_off * 8);
-            let plane1 = io.vram[usize::from(plane_pair_addr) + 0];
-            let plane2 = io.vram[usize::from(plane_pair_addr) + 1];
+            let plane1 = self.vram[usize::from(plane_pair_addr) + 0];
+            let plane2 = self.vram[usize::from(plane_pair_addr) + 1];
 
             let bit1 = plane1.rotate_left(tile_off_x as u32 + 1) & 1;
             let bit2 = plane2.rotate_left(tile_off_x as u32 + 1) & 1;
@@ -1199,15 +1180,15 @@ impl Ppu {
         }
         palette_idx += palette_offset;
         LayerColor::new(
-            self.get_color(io, palette_idx),
+            self.get_color(palette_idx),
             priorities[bg_priority as usize],
         )
     }
 
-    fn get_color(&self, io: &PpuIo, palette_idx: u8) -> Color {
+    fn get_color(&self, palette_idx: u8) -> Color {
         let cgram_addr = usize::from(palette_idx) * 2;
-        let color_lo = io.cgram[cgram_addr];
-        let color_hi = io.cgram[cgram_addr + 1];
+        let color_lo = self.cgram[cgram_addr];
+        let color_hi = self.cgram[cgram_addr + 1];
         let color = (color_lo as u16) | (color_hi as u16) << 8;
 
         let r = u5::extract_u16(color, 0);

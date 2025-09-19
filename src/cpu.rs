@@ -666,7 +666,7 @@ fn int_reset(emu: &mut Snes) {
     enter_interrupt_handler(emu, Interrupt::Reset);
 
     emu.cpu_io.reset();
-    emu.ppu_io.reset();
+    emu.ppu.reset();
     emu.apu_io.reset();
 }
 

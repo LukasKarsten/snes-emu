@@ -113,7 +113,7 @@ impl ApplicationHandler for App {
 
             let output_image = emu_state.snes.ppu.output();
 
-            emu_state.current_image_height = emu_state.snes.ppu_io.output_height();
+            emu_state.current_image_height = emu_state.snes.ppu.output_height();
             {
                 let mut current_image = emu_state.current_image.lock().unwrap();
                 *current_image = output_image.clone();

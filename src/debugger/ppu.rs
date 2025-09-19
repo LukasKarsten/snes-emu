@@ -11,8 +11,6 @@ impl super::Tab for PpuMiscTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.ppu_io;
-
         fn drag_value<UT: egui::emath::Numeric, T: Number<UnderlyingType = UT> + Copy>(
             value: &mut T,
             label: &str,
@@ -31,35 +29,30 @@ impl super::Tab for PpuMiscTab {
         }
 
         egui::ScrollArea::horizontal().show(ui, |ui| {
+            let ppu = &mut emulation_state.snes.ppu;
+
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
-                    ui.checkbox(&mut ppuio.inidisp_forced_blanking, "Forced Blanking");
-                    drag_value(
-                        &mut ppuio.inidisp_master_brightness,
-                        "Master Brightness",
-                        ui,
-                    );
+                    ui.checkbox(&mut ppu.inidisp_forced_blanking, "Forced Blanking");
+                    drag_value(&mut ppu.inidisp_master_brightness, "Master Brightness", ui);
                 });
 
                 ui.vertical(|ui| {
-                    ui.checkbox(&mut ppuio.setini_interlace, "Interlace");
-                    ui.checkbox(
-                        &mut ppuio.setini_interlace_obj_highvres,
-                        "Interlace Objects",
-                    );
-                    ui.checkbox(&mut ppuio.setini_overscan, "Overscan");
-                    ui.checkbox(&mut ppuio.setini_hpseudo512, "Pseudo 512");
-                    ui.checkbox(&mut ppuio.setini_extbg, "External BG");
-                    ui.checkbox(&mut ppuio.setini_external_sync, "External Sync");
+                    ui.checkbox(&mut ppu.setini_interlace, "Interlace");
+                    ui.checkbox(&mut ppu.setini_interlace_obj_highvres, "Interlace Objects");
+                    ui.checkbox(&mut ppu.setini_overscan, "Overscan");
+                    ui.checkbox(&mut ppu.setini_hpseudo512, "Pseudo 512");
+                    ui.checkbox(&mut ppu.setini_extbg, "External BG");
+                    ui.checkbox(&mut ppu.setini_external_sync, "External Sync");
                 });
 
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        egui::DragValue::new(&mut emulation_state.snes.ppu.hpos).ui(ui);
+                        egui::DragValue::new(&mut ppu.hpos).ui(ui);
                         ui.label("hpos");
                     });
                     ui.horizontal(|ui| {
-                        egui::DragValue::new(&mut emulation_state.snes.ppu.vpos).ui(ui);
+                        egui::DragValue::new(&mut ppu.vpos).ui(ui);
                         ui.label("vpos");
                     });
                 });
@@ -77,7 +70,7 @@ impl super::Tab for PpuBackgroundsTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.ppu_io;
+        let ppuio = &mut emulation_state.snes.ppu;
 
         egui::ComboBox::new("ppu-bg-mode", "Mode")
             .selected_text(format!("{}", ppuio.backgrounds.mode))
@@ -179,7 +172,7 @@ impl super::Tab for PpuObjectsTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.ppu_io;
+        let ppuio = &mut emulation_state.snes.ppu;
 
         enum_combobox!(
             ui,
@@ -207,7 +200,7 @@ impl super::Tab for PpuScreensTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.ppu_io;
+        let ppuio = &mut emulation_state.snes.ppu;
 
         fn bitfield_checkbox(bitfield: &mut u8, idx: u8, label: &str, ui: &mut egui::Ui) {
             let mut value = (*bitfield >> idx) & 1 != 0;
@@ -269,7 +262,7 @@ impl super::Tab for PpuWindowsTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.ppu_io;
+        let ppuio = &mut emulation_state.snes.ppu;
 
         fn bitfield_checkbox(bitfield: &mut u8, idx: u8, label: &str, ui: &mut egui::Ui) {
             let mut value = (*bitfield >> idx) & 1 != 0;
@@ -332,7 +325,7 @@ impl super::Tab for PpuOamTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.ppu_io;
+        let ppuio = &mut emulation_state.snes.ppu;
 
         /*
         egui::DragValue::new(&mut self.current_object)
@@ -379,7 +372,7 @@ impl super::Tab for PpuVRamTab {
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
         self.memory_editor.draw_editor_contents(
             ui,
-            emulation_state.snes.ppu_io.vram.as_mut(),
+            emulation_state.snes.ppu.vram.as_mut(),
             |mem, addr| Some(mem[addr]),
             |mem, addr, value| mem[addr] = value,
         );
@@ -404,7 +397,7 @@ impl super::Tab for PpuCgRamTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let cgram = emulation_state.snes.ppu_io.cgram.as_mut();
+        let cgram = emulation_state.snes.ppu.cgram.as_mut();
 
         self.memory_editor.draw_editor_contents(
             ui,
@@ -445,7 +438,7 @@ impl super::Tab for PpuSpritesTab {
                     ..Default::default()
                 };
                 let texture = self.texture.get_or_insert_with(|| {
-                    let vram = emulation_state.snes.ppu_io.vram.as_mut();
+                    let vram = emulation_state.snes.ppu.vram.as_mut();
                     let image = compute_vram_image(vram, self.bits_per_pixel);
                     ui.ctx().load_texture("vram-preview", image, options)
                 });
@@ -488,7 +481,7 @@ impl super::Tab for PpuSpritesTab {
                 changed |= ui.button("Update").clicked();
 
                 if changed {
-                    let vram = emulation_state.snes.ppu_io.vram.as_mut();
+                    let vram = emulation_state.snes.ppu.vram.as_mut();
                     let image = compute_vram_image(vram, self.bits_per_pixel);
                     texture.set(image, options);
                 }
