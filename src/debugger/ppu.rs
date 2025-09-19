@@ -11,7 +11,7 @@ impl super::Tab for PpuMiscTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.bus.ppu;
+        let ppuio = &mut emulation_state.snes.ppu_io;
 
         fn drag_value<UT: egui::emath::Numeric, T: Number<UnderlyingType = UT> + Copy>(
             value: &mut T,
@@ -77,7 +77,7 @@ impl super::Tab for PpuBackgroundsTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.bus.ppu;
+        let ppuio = &mut emulation_state.snes.ppu_io;
 
         egui::ComboBox::new("ppu-bg-mode", "Mode")
             .selected_text(format!("{}", ppuio.backgrounds.mode))
@@ -179,7 +179,7 @@ impl super::Tab for PpuObjectsTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.bus.ppu;
+        let ppuio = &mut emulation_state.snes.ppu_io;
 
         enum_combobox!(
             ui,
@@ -207,7 +207,7 @@ impl super::Tab for PpuScreensTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.bus.ppu;
+        let ppuio = &mut emulation_state.snes.ppu_io;
 
         fn bitfield_checkbox(bitfield: &mut u8, idx: u8, label: &str, ui: &mut egui::Ui) {
             let mut value = (*bitfield >> idx) & 1 != 0;
@@ -269,7 +269,7 @@ impl super::Tab for PpuWindowsTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.bus.ppu;
+        let ppuio = &mut emulation_state.snes.ppu_io;
 
         fn bitfield_checkbox(bitfield: &mut u8, idx: u8, label: &str, ui: &mut egui::Ui) {
             let mut value = (*bitfield >> idx) & 1 != 0;
@@ -332,7 +332,7 @@ impl super::Tab for PpuOamTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let ppuio = &mut emulation_state.snes.bus.ppu;
+        let ppuio = &mut emulation_state.snes.ppu_io;
 
         /*
         egui::DragValue::new(&mut self.current_object)
@@ -379,7 +379,7 @@ impl super::Tab for PpuVRamTab {
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
         self.memory_editor.draw_editor_contents(
             ui,
-            emulation_state.snes.bus.ppu.vram.as_mut(),
+            emulation_state.snes.ppu_io.vram.as_mut(),
             |mem, addr| Some(mem[addr]),
             |mem, addr, value| mem[addr] = value,
         );
@@ -404,7 +404,7 @@ impl super::Tab for PpuCgRamTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        let cgram = emulation_state.snes.bus.ppu.cgram.as_mut();
+        let cgram = emulation_state.snes.ppu_io.cgram.as_mut();
 
         self.memory_editor.draw_editor_contents(
             ui,
@@ -445,7 +445,7 @@ impl super::Tab for PpuSpritesTab {
                     ..Default::default()
                 };
                 let texture = self.texture.get_or_insert_with(|| {
-                    let vram = emulation_state.snes.bus.ppu.vram.as_mut();
+                    let vram = emulation_state.snes.ppu_io.vram.as_mut();
                     let image = compute_vram_image(vram, self.bits_per_pixel);
                     ui.ctx().load_texture("vram-preview", image, options)
                 });
@@ -488,7 +488,7 @@ impl super::Tab for PpuSpritesTab {
                 changed |= ui.button("Update").clicked();
 
                 if changed {
-                    let vram = emulation_state.snes.bus.ppu.vram.as_mut();
+                    let vram = emulation_state.snes.ppu_io.vram.as_mut();
                     let image = compute_vram_image(vram, self.bits_per_pixel);
                     texture.set(image, options);
                 }

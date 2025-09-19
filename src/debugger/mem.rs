@@ -32,7 +32,7 @@ impl Tab for BusTab {
             ui,
             "mapping-mode",
             "Mapping Mode",
-            &mut emulation_state.snes.bus.mapping_mode,
+            &mut emulation_state.snes.mapping_mode,
             snes_emu::MappingMode::LoRom => "LoROM",
             snes_emu::MappingMode::HiRom => "HiROM",
             snes_emu::MappingMode::ExHiRom => "ExHiROM",
@@ -40,9 +40,9 @@ impl Tab for BusTab {
 
         self.memory_editor.draw_editor_contents(
             ui,
-            &mut emulation_state.snes.bus,
-            |bus, addr| bus.read_pure(addr as u32),
-            |bus, addr, value| bus.write(addr as u32, value),
+            &mut emulation_state.snes,
+            |emu, addr| emu.read_pure(addr as u32),
+            |emu, addr, value| emu.write(addr as u32, value),
         );
     }
 }

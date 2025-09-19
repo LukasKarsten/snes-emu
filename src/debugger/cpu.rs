@@ -84,7 +84,7 @@ impl Tab for CpuTab {
                 });
 
                 ui.horizontal(|ui| {
-                    let cpuio = &mut emulation_state.snes.bus.cpu;
+                    let cpuio = &mut emulation_state.snes.cpu_io;
 
                     if ui.button("Reset").clicked() {
                         cpuio.raise_interrupt(snes_emu::cpu::Interrupt::Reset);
@@ -162,11 +162,7 @@ impl Tab for CpuTab {
             ui.vertical(|ui| {
                 egui::Grid::new("cpu-disasm").striped(true).show(ui, |ui| {
                     let mut instructions = [snes_emu::disasm::Instruction::default(); 10];
-                    snes_emu::disasm::disassemble(
-                        &emulation_state.snes.cpu,
-                        &emulation_state.snes.bus,
-                        &mut instructions,
-                    );
+                    snes_emu::disasm::disassemble(&emulation_state.snes, &mut instructions);
                     for instruction in instructions {
                         ui.monospace(format!("{:06X}:", instruction.address()));
                         ui.monospace(instruction.to_string());
@@ -195,7 +191,7 @@ impl Tab for CpuTab {
             });
 
             ui.vertical(|ui| {
-                let cpuio = &mut emulation_state.snes.bus.cpu;
+                let cpuio = &mut emulation_state.snes.cpu_io;
 
                 ui.checkbox(&mut cpuio.nmitimen_vblank_nmi_enable, "VBlank NMI Enable");
                 enum_combobox!(

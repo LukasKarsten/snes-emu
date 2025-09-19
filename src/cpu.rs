@@ -2,9 +2,7 @@ use std::fmt::{self, Write};
 
 use arbitrary_int::*;
 
-//use crate::{scheduler::TaskResult, StepMode};
-
-use super::Bus;
+use crate::Snes;
 
 #[repr(transparent)]
 #[derive(Default, Clone, Copy)]
@@ -180,7 +178,7 @@ enum AddressingMode {
 }
 
 #[derive(Clone, Copy)]
-enum Operand {
+pub enum Operand {
     A,
     X,
     Y,
@@ -197,41 +195,35 @@ impl Operand {
 }
 
 #[derive(Clone, Copy)]
-struct Pointer(u32);
+pub struct Pointer {
+    low: u32,
+    high: u32,
+}
 
 impl Pointer {
     fn new16(hh: u8, mmll: u16) -> Self {
-        Self(0x0000_0000 | (hh as u32) << 16 | (mmll as u32))
+        let low = (hh as u32) << 16 | (mmll as u32);
+        let high = (hh as u32) << 16 | (mmll as u32).wrapping_add(1);
+        Self { low, high }
     }
 
     fn new8(hh: u8, mm: u8, ll: u8) -> Self {
-        Self(0x0100_0000 | (hh as u32) << 16 | (mm as u32) << 8 | (ll as u32))
+        let low = (hh as u32) << 16 | (mm as u32) << 8 | (ll as u32);
+        let high = (hh as u32) << 16 | (mm as u32) << 8 | (ll as u32).wrapping_add(1);
+        Self { low, high }
     }
 
     fn new24(hhmmll: u32) -> Self {
         assert!(hhmmll & 0xFF00_0000 == 0);
-        Self(0x0200_0000 | hhmmll)
+        let low = hhmmll;
+        let high = hhmmll.wrapping_add(1);
+        Self { low, high }
     }
 
-    fn with_offset_u16(self, off: u16) -> Self {
-        Self(match self.0 >> 24 {
-            0x00 => self.0 & 0xFFFF_0000 | (self.0 as u16).wrapping_add(off) as u32,
-            0x01 => panic!("cannot add 16 bit offset to 8 bit pointer"),
-            0x02 => 0x0200_0000 | ((self.0 + off as u32) & 0x00FF_FFFF),
-            _ => unreachable!(),
-        })
-    }
-
-    fn to_page_pointer(self) -> Self {
-        Self(self.0 | 0x0100_0000)
-    }
-
-    fn at(self, off: i8) -> u32 {
-        match self.0 >> 24 {
-            0x00 => self.0 & 0xFFFF_0000 | (self.0 as u16).wrapping_add_signed(off as i16) as u32,
-            0x01 => self.0 & 0x00FF_FF00 | (self.0 as u8).wrapping_add_signed(off) as u32,
-            0x02 => (self.0 + off as u32) & 0x00FF_FFFF,
-            _ => unreachable!(),
+    fn with_offset(self, offset: u16) -> Self {
+        Self {
+            low: self.low.wrapping_add(u32::from(offset)),
+            high: self.high.wrapping_add(u32::from(offset)),
         }
     }
 }
@@ -553,1598 +545,1600 @@ pub struct Cpu {
     pub debug: CpuDebug,
 }
 
-impl Cpu {
-    fn next_instr_byte(&mut self, bus: &mut Bus) -> u8 {
-        let pc = self.regs.pc.get();
-        self.regs.pc.set(pc.wrapping_add(1));
-        bus.read((self.regs.k as u32) << 16 | pc as u32)
-    }
+fn next_instr_byte(emu: &mut Snes) -> u8 {
+    let pc = emu.cpu.regs.pc.get();
+    emu.cpu.regs.pc.set(pc.wrapping_add(1));
+    emu.read((emu.cpu.regs.k as u32) << 16 | pc as u32)
+}
 
-    fn skip_instr_byte(&mut self) {
-        self.regs.pc.set(self.regs.pc.get().wrapping_add(1));
-    }
+fn skip_instr_byte(emu: &mut Snes) {
+    emu.cpu.regs.pc.set(emu.cpu.regs.pc.get().wrapping_add(1));
+}
 
-    fn read_operand(&mut self, bus: &mut Bus, mode: AddressingMode) -> Operand {
-        match mode {
-            AddressingMode::Accumulator => Operand::A,
-            AddressingMode::X => Operand::X,
-            AddressingMode::Y => Operand::Y,
-            _ => Operand::Memory(self.read_pointer(bus, mode)),
+fn read_operand(emu: &mut Snes, mode: AddressingMode) -> Operand {
+    match mode {
+        AddressingMode::Accumulator => Operand::A,
+        AddressingMode::X => Operand::X,
+        AddressingMode::Y => Operand::Y,
+        _ => Operand::Memory(read_pointer(emu, mode)),
+    }
+}
+
+fn get_operand_u8(emu: &mut Snes, operand: Operand) -> u8 {
+    match operand {
+        Operand::A => emu.cpu.regs.a.getl(),
+        Operand::X => emu.cpu.regs.x.getl(),
+        Operand::Y => emu.cpu.regs.y.getl(),
+        Operand::Memory(pointer) => emu.read(pointer.low),
+    }
+}
+
+fn get_operand_u16(emu: &mut Snes, operand: Operand) -> u16 {
+    match operand {
+        Operand::A => emu.cpu.regs.a.get(),
+        Operand::X => emu.cpu.regs.x.get(),
+        Operand::Y => emu.cpu.regs.y.get(),
+        Operand::Memory(pointer) => {
+            let ll = emu.read(pointer.low) as u16;
+            let hh = emu.read(pointer.high) as u16;
+            hh << 8 | ll
         }
     }
+}
 
-    fn get_operand_u8(&mut self, bus: &mut Bus, operand: Operand) -> u8 {
-        match operand {
-            Operand::A => self.regs.a.getl(),
-            Operand::X => self.regs.x.getl(),
-            Operand::Y => self.regs.y.getl(),
-            Operand::Memory(pointer) => bus.read(pointer.at(0)),
+fn set_operand_u8(emu: &mut Snes, operand: Operand, value: u8) {
+    match operand {
+        Operand::A => emu.cpu.regs.a.setl(value),
+        Operand::X => emu.cpu.regs.x.setl(value),
+        Operand::Y => emu.cpu.regs.y.setl(value),
+        Operand::Memory(pointer) => emu.write(pointer.low, value),
+    }
+}
+
+fn set_operand_u16(emu: &mut Snes, operand: Operand, value: u16) {
+    match operand {
+        Operand::A => emu.cpu.regs.a.set(value),
+        Operand::X => emu.cpu.regs.x.set(value),
+        Operand::Y => emu.cpu.regs.y.set(value),
+        Operand::Memory(pointer) => {
+            emu.write(pointer.low, value as u8);
+            emu.write(pointer.high, (value >> 8) as u8);
         }
     }
+}
 
-    fn get_operand_u16(&mut self, bus: &mut Bus, operand: Operand) -> u16 {
-        match operand {
-            Operand::A => self.regs.a.get(),
-            Operand::X => self.regs.x.get(),
-            Operand::Y => self.regs.y.get(),
-            Operand::Memory(pointer) => {
-                let ll = bus.read(pointer.at(0)) as u16;
-                let hh = bus.read(pointer.at(1)) as u16;
-                hh << 8 | ll
-            }
+fn push8old(emu: &mut Snes, value: u8) {
+    emu.write(emu.cpu.regs.s.get().into(), value);
+    if emu.cpu.regs.p.e {
+        emu.cpu.regs.s.setl(emu.cpu.regs.s.getl().wrapping_sub(1))
+    } else {
+        emu.cpu.regs.s.set(emu.cpu.regs.s.get().wrapping_sub(1))
+    }
+}
+
+fn push8new(emu: &mut Snes, value: u8) {
+    emu.write(emu.cpu.regs.s.get().into(), value);
+    emu.cpu.regs.s.set(emu.cpu.regs.s.get().wrapping_sub(1));
+}
+
+fn push16old(emu: &mut Snes, value: u16) {
+    push8old(emu, (value >> 8) as u8);
+    push8old(emu, value as u8);
+}
+
+fn push16new(emu: &mut Snes, value: u16) {
+    push8new(emu, (value >> 8) as u8);
+    push8new(emu, value as u8);
+}
+
+fn pull8old(emu: &mut Snes) -> u8 {
+    if emu.cpu.regs.p.e {
+        emu.cpu.regs.s.setl(emu.cpu.regs.s.getl().wrapping_add(1));
+    } else {
+        emu.cpu.regs.s.set(emu.cpu.regs.s.get().wrapping_add(1));
+    }
+    emu.read(emu.cpu.regs.s.get().into())
+}
+
+fn pull8new(emu: &mut Snes) -> u8 {
+    emu.cpu.regs.s.set(emu.cpu.regs.s.get().wrapping_add(1));
+    emu.read(emu.cpu.regs.s.get().into())
+}
+
+fn pull16old(emu: &mut Snes) -> u16 {
+    let ll = pull8old(emu) as u16;
+    let hh = pull8old(emu) as u16;
+    hh << 8 | ll
+}
+
+fn pull16new(emu: &mut Snes) -> u16 {
+    let ll = pull8new(emu) as u16;
+    let hh = pull8new(emu) as u16;
+    hh << 8 | ll
+}
+
+fn int_reset(emu: &mut Snes) {
+    emu.cpu.regs.p = Flags::default();
+    emu.cpu.regs.x.seth(0x00);
+    emu.cpu.regs.y.seth(0x00);
+    emu.cpu.regs.s.seth(0x01);
+    // FIXME: should this happen before or after resetting the registers?
+    enter_interrupt_handler(emu, Interrupt::Reset);
+
+    emu.cpu_io.reset();
+    emu.ppu_io.reset();
+    emu.apu_io.reset();
+}
+
+fn int_break(emu: &mut Snes) {
+    if emu.cpu.regs.p.e {
+        // FIXME: Should XH and YH also be set to zero when the x/b flag is set in emulation
+        // mode?
+        emu.cpu.regs.p.xb = true;
+    }
+    skip_instr_byte(emu);
+    enter_interrupt_handler(emu, Interrupt::Break);
+}
+
+fn int_cop(emu: &mut Snes) {
+    skip_instr_byte(emu);
+    enter_interrupt_handler(emu, Interrupt::Cop);
+}
+
+fn enter_interrupt_handler(emu: &mut Snes, interrupt: Interrupt) {
+    if !emu.cpu.regs.p.e {
+        push8old(emu, emu.cpu.regs.k);
+    }
+
+    // FIXME: Apparently there are "new" and "old" interrupts with different wrapping behaviour
+    // here.
+    let ret = emu.cpu.regs.pc.get();
+    push16old(emu, ret);
+    push8old(emu, emu.cpu.regs.p.to_bits());
+
+    emu.cpu.regs.p.i = true;
+    emu.cpu.regs.p.d = false;
+
+    let vector_addr = if emu.cpu.regs.p.e {
+        match interrupt {
+            Interrupt::Cop => 0xFFF4,
+            Interrupt::Abort => 0xFFF8,
+            Interrupt::Nmi => 0xFFFA,
+            Interrupt::Reset => 0xFFFC,
+            Interrupt::Irq | Interrupt::Break => 0xFFFE,
         }
-    }
-
-    fn set_operand_u8(&mut self, bus: &mut Bus, operand: Operand, value: u8) {
-        match operand {
-            Operand::A => self.regs.a.setl(value),
-            Operand::X => self.regs.x.setl(value),
-            Operand::Y => self.regs.y.setl(value),
-            Operand::Memory(pointer) => bus.write(pointer.at(0), value),
+    } else {
+        match interrupt {
+            Interrupt::Cop => 0xFFE4,
+            Interrupt::Break => 0xFFE6,
+            Interrupt::Abort => 0xFFE8,
+            Interrupt::Nmi => 0xFFEA,
+            Interrupt::Reset => panic!("cannot enter reset interrupt handler in native mode"),
+            Interrupt::Irq => 0xFFEE,
         }
-    }
+    };
 
-    fn set_operand_u16(&mut self, bus: &mut Bus, operand: Operand, value: u16) {
-        match operand {
-            Operand::A => self.regs.a.set(value),
-            Operand::X => self.regs.x.set(value),
-            Operand::Y => self.regs.y.set(value),
-            Operand::Memory(pointer) => {
-                bus.write(pointer.at(0), value as u8);
-                bus.write(pointer.at(1), (value >> 8) as u8);
-            }
+    let target_ll = emu.read(vector_addr);
+    let target_hh = emu.read(vector_addr + 1);
+    let target = (target_hh as u16) << 8 | target_ll as u16;
+    emu.cpu.regs.pc.set(target);
+    emu.cpu.regs.k = 0;
+}
+
+fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
+    match mode {
+        AddressingMode::AbsoluteJmp => {
+            let addr_ll = next_instr_byte(emu) as u16;
+            let addr_hh = next_instr_byte(emu) as u16;
+            let k = emu.cpu.regs.k;
+            Pointer::new16(k, addr_hh << 8 | addr_ll)
         }
-    }
-
-    fn push8old(&mut self, bus: &mut Bus, value: u8) {
-        bus.write(self.regs.s.get().into(), value);
-        if self.regs.p.e {
-            self.regs.s.setl(self.regs.s.getl().wrapping_sub(1))
-        } else {
-            self.regs.s.set(self.regs.s.get().wrapping_sub(1))
+        AddressingMode::Absolute => {
+            let addr_ll = next_instr_byte(emu) as u32;
+            let addr_hh = next_instr_byte(emu) as u32;
+            let dbr = emu.cpu.regs.dbr as u32;
+            Pointer::new24(dbr << 16 | addr_hh << 8 | addr_ll)
         }
-    }
-
-    fn push8new(&mut self, bus: &mut Bus, value: u8) {
-        bus.write(self.regs.s.get().into(), value);
-        self.regs.s.set(self.regs.s.get().wrapping_sub(1));
-    }
-
-    fn push16old(&mut self, bus: &mut Bus, value: u16) {
-        self.push8old(bus, (value >> 8) as u8);
-        self.push8old(bus, value as u8);
-    }
-
-    fn push16new(&mut self, bus: &mut Bus, value: u16) {
-        self.push8new(bus, (value >> 8) as u8);
-        self.push8new(bus, value as u8);
-    }
-
-    fn pull8old(&mut self, bus: &mut Bus) -> u8 {
-        if self.regs.p.e {
-            self.regs.s.setl(self.regs.s.getl().wrapping_add(1));
-        } else {
-            self.regs.s.set(self.regs.s.get().wrapping_add(1));
+        // FIXME: Is this (and the other arms where X and Y are used) affected by the x flag?
+        // PERF: recursive call of `read_pointer` might not get inlined here
+        AddressingMode::AbsoluteX => {
+            read_pointer(emu, AddressingMode::Absolute).with_offset(emu.cpu.regs.x.get())
         }
-        bus.read(self.regs.s.get().into())
-    }
-
-    fn pull8new(&mut self, bus: &mut Bus) -> u8 {
-        self.regs.s.set(self.regs.s.get().wrapping_add(1));
-        bus.read(self.regs.s.get().into())
-    }
-
-    fn pull16old(&mut self, bus: &mut Bus) -> u16 {
-        let ll = self.pull8old(bus) as u16;
-        let hh = self.pull8old(bus) as u16;
-        hh << 8 | ll
-    }
-
-    fn pull16new(&mut self, bus: &mut Bus) -> u16 {
-        let ll = self.pull8new(bus) as u16;
-        let hh = self.pull8new(bus) as u16;
-        hh << 8 | ll
-    }
-
-    fn int_reset(&mut self, bus: &mut Bus) {
-        self.regs.p = Flags::default();
-        self.regs.x.seth(0x00);
-        self.regs.y.seth(0x00);
-        self.regs.s.seth(0x01);
-        // FIXME: should this happen before or after resetting the registers?
-        self.enter_interrupt_handler(bus, Interrupt::Reset);
-
-        bus.cpu.reset();
-        bus.ppu.reset();
-        bus.apu.reset();
-    }
-
-    fn int_break(&mut self, bus: &mut Bus) {
-        if self.regs.p.e {
-            // FIXME: Should XH and YH also be set to zero when the x/b flag is set in emulation
-            // mode?
-            self.regs.p.xb = true;
+        AddressingMode::AbsoluteY => {
+            read_pointer(emu, AddressingMode::Absolute).with_offset(emu.cpu.regs.y.get())
         }
-        self.skip_instr_byte();
-        self.enter_interrupt_handler(bus, Interrupt::Break);
-    }
+        AddressingMode::AbsoluteParensJmp => {
+            let pointer_ll = next_instr_byte(emu) as u16;
+            let pointer_hh = next_instr_byte(emu) as u16;
 
-    fn int_cop(&mut self, bus: &mut Bus) {
-        self.skip_instr_byte();
-        self.enter_interrupt_handler(bus, Interrupt::Cop);
-    }
+            let pointer_lo = pointer_hh << 8 | pointer_ll;
+            let pointer_hi = pointer_lo.wrapping_add(1);
 
-    fn enter_interrupt_handler(&mut self, bus: &mut Bus, interrupt: Interrupt) {
-        if !self.regs.p.e {
-            self.push8old(bus, self.regs.k);
+            let data_ll = emu.read(pointer_lo as u32) as u16;
+            let data_hh = emu.read(pointer_hi as u32) as u16;
+            Pointer::new16(emu.cpu.regs.k, data_hh << 8 | data_ll)
         }
+        AddressingMode::AbsoluteBracketsJmp => {
+            let pointer_ll = next_instr_byte(emu) as u16;
+            let pointer_hh = next_instr_byte(emu) as u16;
 
-        // FIXME: Apparently there are "new" and "old" interrupts with different wrapping behaviour
-        // here.
-        let ret = self.regs.pc.get();
-        self.push16old(bus, ret);
-        self.push8old(bus, self.regs.p.to_bits());
+            let pointer_lo = pointer_hh << 8 | pointer_ll;
+            let pointer_mid = pointer_lo.wrapping_add(1);
+            let pointer_hi = pointer_lo.wrapping_add(2);
 
-        self.regs.p.i = true;
-        self.regs.p.d = false;
+            let data_ll = emu.read(pointer_lo as u32) as u16;
+            let data_mm = emu.read(pointer_mid as u32) as u16;
+            let data_hh = emu.read(pointer_hi as u32);
+            Pointer::new16(data_hh, data_mm << 8 | data_ll)
+        }
+        AddressingMode::AbsoluteXParensJmp => {
+            let pointer_ll = next_instr_byte(emu) as u16;
+            let pointer_hh = next_instr_byte(emu) as u16;
+            let x = emu.cpu.regs.x.get();
+            let k = emu.cpu.regs.k as u32;
 
-        let vector_addr = if self.regs.p.e {
-            match interrupt {
-                Interrupt::Cop => 0xFFF4,
-                Interrupt::Abort => 0xFFF8,
-                Interrupt::Nmi => 0xFFFA,
-                Interrupt::Reset => 0xFFFC,
-                Interrupt::Irq | Interrupt::Break => 0xFFFE,
-            }
-        } else {
-            match interrupt {
-                Interrupt::Cop => 0xFFE4,
-                Interrupt::Break => 0xFFE6,
-                Interrupt::Abort => 0xFFE8,
-                Interrupt::Nmi => 0xFFEA,
-                Interrupt::Reset => panic!("cannot enter reset interrupt handler in native mode"),
-                Interrupt::Irq => 0xFFEE,
-            }
-        };
+            let partial_pointer = (pointer_hh << 8 | pointer_ll).wrapping_add(x);
+            let pointer_lo = k << 16 | partial_pointer as u32;
+            let pointer_hi = k << 16 | partial_pointer.wrapping_add(1) as u32;
 
-        let target_ll = bus.read(vector_addr);
-        let target_hh = bus.read(vector_addr + 1);
-        self.regs.pc.set((target_hh as u16) << 8 | target_ll as u16);
-        self.regs.k = 0;
-    }
+            let data_lo = emu.read(pointer_lo) as u16;
+            let data_hi = emu.read(pointer_hi) as u16;
+            Pointer::new16(emu.cpu.regs.k, data_hi << 8 | data_lo)
+        }
+        AddressingMode::DirectOld => {
+            let ll = next_instr_byte(emu);
 
-    fn read_pointer(&mut self, bus: &mut Bus, mode: AddressingMode) -> Pointer {
-        match mode {
-            AddressingMode::AbsoluteJmp => {
-                let addr_ll = self.next_instr_byte(bus) as u16;
-                let addr_hh = self.next_instr_byte(bus) as u16;
-                let k = self.regs.k;
-                Pointer::new16(k, addr_hh << 8 | addr_ll)
-            }
-            AddressingMode::Absolute => {
-                let addr_ll = self.next_instr_byte(bus) as u32;
-                let addr_hh = self.next_instr_byte(bus) as u32;
-                let dbr = self.regs.dbr as u32;
-                Pointer::new24(dbr << 16 | addr_hh << 8 | addr_ll)
-            }
-            // FIXME: Is this (and the other arms where X and Y are used) affected by the x flag?
-            // PERF: recursive call of `read_pointer` might not get inlined here
-            AddressingMode::AbsoluteX => self
-                .read_pointer(bus, AddressingMode::Absolute)
-                .with_offset_u16(self.regs.x.get()),
-            AddressingMode::AbsoluteY => self
-                .read_pointer(bus, AddressingMode::Absolute)
-                .with_offset_u16(self.regs.y.get()),
-            AddressingMode::AbsoluteParensJmp => {
-                let pointer_ll = self.next_instr_byte(bus) as u16;
-                let pointer_hh = self.next_instr_byte(bus) as u16;
-
-                let pointer_lo = pointer_hh << 8 | pointer_ll;
-                let pointer_hi = pointer_lo.wrapping_add(1);
-
-                let data_ll = bus.read(pointer_lo as u32) as u16;
-                let data_hh = bus.read(pointer_hi as u32) as u16;
-                Pointer::new16(self.regs.k, data_hh << 8 | data_ll)
-            }
-            AddressingMode::AbsoluteBracketsJmp => {
-                let pointer_ll = self.next_instr_byte(bus) as u16;
-                let pointer_hh = self.next_instr_byte(bus) as u16;
-
-                let pointer_lo = pointer_hh << 8 | pointer_ll;
-                let pointer_mid = pointer_lo.wrapping_add(1);
-                let pointer_hi = pointer_lo.wrapping_add(2);
-
-                let data_ll = bus.read(pointer_lo as u32) as u16;
-                let data_mm = bus.read(pointer_mid as u32) as u16;
-                let data_hh = bus.read(pointer_hi as u32);
-                Pointer::new16(data_hh, data_mm << 8 | data_ll)
-            }
-            AddressingMode::AbsoluteXParensJmp => {
-                let pointer_ll = self.next_instr_byte(bus) as u16;
-                let pointer_hh = self.next_instr_byte(bus) as u16;
-                let x = self.regs.x.get();
-                let k = self.regs.k as u32;
-
-                let partial_pointer = (pointer_hh << 8 | pointer_ll).wrapping_add(x);
-                let pointer_lo = k << 16 | partial_pointer as u32;
-                let pointer_hi = k << 16 | partial_pointer.wrapping_add(1) as u32;
-
-                let data_lo = bus.read(pointer_lo) as u16;
-                let data_hi = bus.read(pointer_hi) as u16;
-                Pointer::new16(self.regs.k, data_hi << 8 | data_lo)
-            }
-            AddressingMode::DirectOld => {
-                let ll = self.next_instr_byte(bus);
-                if self.regs.d.getl() == 0 && self.regs.p.e {
-                    let dh = self.regs.d.geth();
-                    Pointer::new8(0, dh, ll)
-                } else {
-                    let d = self.regs.d.get();
-                    Pointer::new16(0, d.wrapping_add(ll as u16))
-                }
-            }
-            AddressingMode::DirectNew => {
-                let ll = self.next_instr_byte(bus);
-                let d = self.regs.d.get();
+            if emu.cpu.regs.d.getl() == 0 && emu.cpu.regs.p.e {
+                let dh = emu.cpu.regs.d.geth();
+                Pointer::new8(0, dh, ll)
+            } else {
+                let d = emu.cpu.regs.d.get();
                 Pointer::new16(0, d.wrapping_add(ll as u16))
             }
-            AddressingMode::DirectX => {
-                let ll = self.next_instr_byte(bus);
-                if self.regs.d.getl() == 0 && self.regs.p.e {
-                    let dh = self.regs.d.geth();
-                    let x = self.regs.x.getl();
-                    Pointer::new8(0, dh, ll.wrapping_add(x))
-                } else {
-                    let d = self.regs.d.get();
-                    let x = self.regs.x.get();
-                    Pointer::new16(0, d.wrapping_add(ll as u16).wrapping_add(x))
-                }
-            }
-            AddressingMode::DirectY => {
-                let ll = self.next_instr_byte(bus);
-                if self.regs.d.getl() == 0 && self.regs.p.e {
-                    let dh = self.regs.d.geth();
-                    let y = self.regs.y.getl();
-                    Pointer::new8(0, dh, ll.wrapping_add(y))
-                } else {
-                    let d = self.regs.d.get() as u16;
-                    let y = self.regs.y.get();
-                    Pointer::new16(0, d.wrapping_add(ll as u16).wrapping_add(y))
-                }
-            }
-            AddressingMode::DirectParens => {
-                let pointer = self.read_pointer(bus, AddressingMode::DirectOld);
-                let data_lo = bus.read(pointer.at(0)) as u32;
-                let data_hi = bus.read(pointer.at(1)) as u32;
-                let dbr = self.regs.dbr as u32;
-                Pointer::new24(dbr << 16 | data_hi << 8 | data_lo)
-            }
-            AddressingMode::DirectBrackets => {
-                let pointer = self.read_pointer(bus, AddressingMode::DirectNew);
-                let data_lo = bus.read(pointer.at(0)) as u32;
-                let data_mid = bus.read(pointer.at(1)) as u32;
-                let data_hi = bus.read(pointer.at(2)) as u32;
-                Pointer::new24(data_hi << 16 | data_mid << 8 | data_lo)
-            }
-            AddressingMode::DirectXParens => {
-                let pointer = self.read_pointer(bus, AddressingMode::DirectX);
-                let data_lo = bus.read(pointer.at(0)) as u32;
-                let data_hi = bus.read(pointer.to_page_pointer().at(1)) as u32;
-                let dbr = self.regs.dbr as u32;
-                Pointer::new24(dbr << 16 | data_hi << 8 | data_lo)
-            }
-            AddressingMode::DirectYParens => self
-                .read_pointer(bus, AddressingMode::DirectParens)
-                .with_offset_u16(self.regs.y.get()),
-            AddressingMode::DirectYBrackets => self
-                .read_pointer(bus, AddressingMode::DirectBrackets)
-                .with_offset_u16(self.regs.y.get()),
-            AddressingMode::ImmediateM => {
-                let regs = &mut self.regs;
-                let pc = regs.pc.get();
-                let delta = 2 - regs.p.m as u16;
-                regs.pc.set(regs.pc.get().wrapping_add(delta));
-                Pointer::new16(regs.k, pc)
-            }
-            AddressingMode::ImmediateX => {
-                let regs = &mut self.regs;
-                let pc = regs.pc.get();
-                let delta = 2 - regs.p.xb as u16;
-                regs.pc.set(regs.pc.get().wrapping_add(delta));
-                Pointer::new16(regs.k, pc)
-            }
-            AddressingMode::Immediate8 => {
-                let pc = self.regs.pc.get();
-                self.regs.pc.set(self.regs.pc.get().wrapping_add(1));
-                Pointer::new16(self.regs.k, pc)
-            }
-            //AddressingMode::Immediate16 => {
-            //    let pc = self.regs.pc.get();
-            //    self.regs.pc.set(self.regs.pc.get().wrapping_add(2));
-            //    Pointer::new16(self.regs.k, pc)
-            //}
-            AddressingMode::Long => {
-                let ll = self.next_instr_byte(bus) as u32;
-                let mm = self.next_instr_byte(bus) as u32;
-                let hh = self.next_instr_byte(bus) as u32;
-                Pointer::new24(hh << 16 | mm << 8 | ll)
-            }
-            AddressingMode::LongX => self
-                .read_pointer(bus, AddressingMode::Long)
-                .with_offset_u16(self.regs.x.get()),
-            AddressingMode::Relative8 => {
-                let ll = self.next_instr_byte(bus);
-                let pc = self.regs.pc.get();
-                Pointer::new16(self.regs.k, pc.wrapping_add_signed(ll as i8 as i16))
-            }
-            AddressingMode::Relative16 => {
-                let ll = self.next_instr_byte(bus) as u16;
-                let hh = self.next_instr_byte(bus) as u16;
-                let pc = self.regs.pc.get();
-                Pointer::new16(self.regs.k, pc.wrapping_add(hh << 8 | ll))
-            }
-            AddressingMode::StackS => {
-                let ll = self.next_instr_byte(bus) as u16;
-                let s = self.regs.s.get();
-                Pointer::new16(0, ll.wrapping_add(s))
-            }
-            AddressingMode::StackSYParens => {
-                let pointer = self.read_pointer(bus, AddressingMode::StackS);
-                let data_ll = bus.read(pointer.at(0)) as u32;
-                let data_hh = bus.read(pointer.at(1)) as u32;
-                let dbr = self.regs.dbr as u32;
-                let y = self.regs.y.get();
-                Pointer::new24(dbr << 16 | data_hh << 8 | data_ll).with_offset_u16(y)
-            }
-            AddressingMode::Accumulator | AddressingMode::X | AddressingMode::Y => {
-                panic!("cannot compute pointer for addressing mode {mode:?}")
-            }
         }
-    }
-
-    fn inst_adc(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-
-        if self.regs.p.m {
-            let value = self.get_operand_u8(bus, op) as u16;
-            let al = self.regs.a.getl() as u16;
-
-            let mut result = self.regs.p.c as u16;
-
-            if !self.regs.p.d {
-                result += al + value;
+        AddressingMode::DirectNew => {
+            let ll = next_instr_byte(emu);
+            let d = emu.cpu.regs.d.get();
+            Pointer::new16(0, d.wrapping_add(ll as u16))
+        }
+        AddressingMode::DirectX => {
+            let ll = next_instr_byte(emu);
+            if emu.cpu.regs.d.getl() == 0 && emu.cpu.regs.p.e {
+                let dh = emu.cpu.regs.d.geth();
+                let x = emu.cpu.regs.x.getl();
+                Pointer::new8(0, dh, ll.wrapping_add(x))
             } else {
-                result += (al & 0x0F) + (value & 0x0F);
-                if result >= 0x0A {
-                    result = (result - 0x0A) | 0x10;
-                }
-                result += (al & 0xF0) + (value & 0xF0);
+                let d = emu.cpu.regs.d.get();
+                let x = emu.cpu.regs.x.get();
+                Pointer::new16(0, d.wrapping_add(ll as u16).wrapping_add(x))
             }
-
-            let overflow = ((!(al ^ value) & (al ^ result)) & 0x80) != 0;
-            if self.regs.p.d && result >= 0xA0 {
-                result += 0x60;
-            }
-
-            self.regs.a.setl(result as u8);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.c = result > 0xff;
-            self.regs.p.v = overflow;
-            self.regs.p.z = result & 0xff == 0;
-        } else {
-            let value = self.get_operand_u16(bus, op) as u32;
-            let a = self.regs.a.get() as u32;
-
-            let mut result = self.regs.p.c as u32;
-
-            if !self.regs.p.d {
-                result += a + value;
+        }
+        AddressingMode::DirectY => {
+            let ll = next_instr_byte(emu);
+            if emu.cpu.regs.d.getl() == 0 && emu.cpu.regs.p.e {
+                let dh = emu.cpu.regs.d.geth();
+                let y = emu.cpu.regs.y.getl();
+                Pointer::new8(0, dh, ll.wrapping_add(y))
             } else {
-                result += (a & 0x000F) + (value & 0x000F);
-                if result >= 0x000A {
-                    result = (result - 0x000A) | 0x0010;
-                }
-                result += (a & 0x00F0) + (value & 0x00F0);
-                if result >= 0x00A0 {
-                    result = (result - 0x00A0) | 0x0100;
-                }
-                result += (a & 0x0F00) + (value & 0x0F00);
-                if result >= 0x0A00 {
-                    result = (result - 0x0A00) | 0x1000;
-                }
-                result += (a & 0xF000) + (value & 0xF000);
+                let d = emu.cpu.regs.d.get() as u16;
+                let y = emu.cpu.regs.y.get();
+                Pointer::new16(0, d.wrapping_add(ll as u16).wrapping_add(y))
             }
+        }
+        AddressingMode::DirectParens => {
+            let pointer = read_pointer(emu, AddressingMode::DirectOld);
+            let data_lo = emu.read(pointer.low) as u32;
+            let data_hi = emu.read(pointer.high) as u32;
+            let dbr = emu.cpu.regs.dbr as u32;
+            Pointer::new24(dbr << 16 | data_hi << 8 | data_lo)
+        }
+        AddressingMode::DirectBrackets => {
+            let ll = next_instr_byte(emu);
+            let addr = emu.cpu.regs.d.get().wrapping_add(ll as u16);
+            let data_lo = emu.read(addr as u32) as u32;
+            let data_mid = emu.read(addr.wrapping_add(1) as u32) as u32;
+            let data_hi = emu.read(addr.wrapping_add(2) as u32) as u32;
+            Pointer::new24(data_hi << 16 | data_mid << 8 | data_lo)
+        }
+        AddressingMode::DirectXParens => {
+            let target_lo = read_pointer(emu, AddressingMode::DirectX).low;
+            let target_hi = (target_lo & 0xFFFFFF00) | (target_lo as u8).wrapping_add(1) as u32;
+            let data_lo = emu.read(target_lo) as u32;
+            let data_hi = emu.read(target_hi) as u32;
+            let dbr = emu.cpu.regs.dbr as u32;
+            Pointer::new24(dbr << 16 | data_hi << 8 | data_lo)
+        }
+        AddressingMode::DirectYParens => {
+            read_pointer(emu, AddressingMode::DirectParens).with_offset(emu.cpu.regs.y.get())
+        }
+        AddressingMode::DirectYBrackets => {
+            read_pointer(emu, AddressingMode::DirectBrackets).with_offset(emu.cpu.regs.y.get())
+        }
+        AddressingMode::ImmediateM => {
+            let regs = &mut emu.cpu.regs;
+            let pc = regs.pc.get();
+            let delta = 2 - regs.p.m as u16;
+            regs.pc.set(regs.pc.get().wrapping_add(delta));
+            Pointer::new16(regs.k, pc)
+        }
+        AddressingMode::ImmediateX => {
+            let regs = &mut emu.cpu.regs;
+            let pc = regs.pc.get();
+            let delta = 2 - regs.p.xb as u16;
+            regs.pc.set(regs.pc.get().wrapping_add(delta));
+            Pointer::new16(regs.k, pc)
+        }
+        AddressingMode::Immediate8 => {
+            let pc = emu.cpu.regs.pc.get();
+            emu.cpu.regs.pc.set(emu.cpu.regs.pc.get().wrapping_add(1));
+            Pointer::new16(emu.cpu.regs.k, pc)
+        }
+        //AddressingMode::Immediate16 => {
+        //    let pc = emu.cpu.regs.pc.get();
+        //    emu.cpu.regs.pc.set(emu.cpu.regs.pc.get().wrapping_add(2));
+        //    Pointer::new16(emu.cpu.regs.k, pc)
+        //}
+        AddressingMode::Long => {
+            let ll = next_instr_byte(emu) as u32;
+            let mm = next_instr_byte(emu) as u32;
+            let hh = next_instr_byte(emu) as u32;
+            Pointer::new24(hh << 16 | mm << 8 | ll)
+        }
+        AddressingMode::LongX => {
+            read_pointer(emu, AddressingMode::Long).with_offset(emu.cpu.regs.x.get())
+        }
+        AddressingMode::Relative8 => {
+            let ll = next_instr_byte(emu);
+            let pc = emu.cpu.regs.pc.get();
+            Pointer::new16(emu.cpu.regs.k, pc.wrapping_add_signed(ll as i8 as i16))
+        }
+        AddressingMode::Relative16 => {
+            let ll = next_instr_byte(emu) as u16;
+            let hh = next_instr_byte(emu) as u16;
+            let pc = emu.cpu.regs.pc.get();
+            Pointer::new16(emu.cpu.regs.k, pc.wrapping_add(hh << 8 | ll))
+        }
+        AddressingMode::StackS => {
+            let ll = next_instr_byte(emu) as u16;
+            let s = emu.cpu.regs.s.get();
+            Pointer::new16(0, ll.wrapping_add(s))
+        }
+        AddressingMode::StackSYParens => {
+            let pointer = read_pointer(emu, AddressingMode::StackS);
+            let data_ll = emu.read(pointer.low) as u32;
+            let data_hh = emu.read(pointer.high) as u32;
+            let dbr = emu.cpu.regs.dbr as u32;
+            let y = emu.cpu.regs.y.get();
+            Pointer::new24(dbr << 16 | data_hh << 8 | data_ll).with_offset(y)
+        }
+        AddressingMode::Accumulator | AddressingMode::X | AddressingMode::Y => {
+            panic!("cannot compute pointer for addressing mode {mode:?}")
+        }
+    }
+}
 
-            let overflow = ((!(a ^ value) & (a ^ result)) & 0x8000) != 0;
-            if self.regs.p.d && result >= 0xA000 {
-                result += 0x6000;
+fn inst_adc(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+
+    if emu.cpu.regs.p.m {
+        let value = get_operand_u8(emu, op) as u16;
+        let al = emu.cpu.regs.a.getl() as u16;
+
+        let mut result = emu.cpu.regs.p.c as u16;
+
+        if !emu.cpu.regs.p.d {
+            result += al + value;
+        } else {
+            result += (al & 0x0F) + (value & 0x0F);
+            if result >= 0x0A {
+                result = (result - 0x0A) | 0x10;
             }
-
-            self.regs.a.set(result as u16);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.c = result > 0xffff;
-            self.regs.p.v = overflow;
-            self.regs.p.z = result & 0xffff == 0;
+            result += (al & 0xF0) + (value & 0xF0);
         }
-    }
 
-    fn inst_sbc(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
+        let overflow = ((!(al ^ value) & (al ^ result)) & 0x80) != 0;
+        if emu.cpu.regs.p.d && result >= 0xA0 {
+            result += 0x60;
+        }
 
-        if self.regs.p.m {
-            let value = !self.get_operand_u8(bus, op) as u16;
-            let al = self.regs.a.getl() as u16;
+        emu.cpu.regs.a.setl(result as u8);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.c = result > 0xff;
+        emu.cpu.regs.p.v = overflow;
+        emu.cpu.regs.p.z = result & 0xff == 0;
+    } else {
+        let value = get_operand_u16(emu, op) as u32;
+        let a = emu.cpu.regs.a.get() as u32;
 
-            let mut result = self.regs.p.c as u16;
+        let mut result = emu.cpu.regs.p.c as u32;
 
-            if !self.regs.p.d {
-                result += al + value;
-            } else {
-                result += (al & 0x0F) + (value & 0x0F);
-                if result <= 0x0F {
-                    result = result.wrapping_sub(0x06) & 0x0F;
-                }
-                result += (al & 0xF0) + (value & 0xF0);
+        if !emu.cpu.regs.p.d {
+            result += a + value;
+        } else {
+            result += (a & 0x000F) + (value & 0x000F);
+            if result >= 0x000A {
+                result = (result - 0x000A) | 0x0010;
             }
-
-            let overflow = ((!(al ^ value) & (al ^ result)) & 0x80) != 0;
-            if self.regs.p.d && result <= 0xFF {
-                result = result.wrapping_sub(0x60);
+            result += (a & 0x00F0) + (value & 0x00F0);
+            if result >= 0x00A0 {
+                result = (result - 0x00A0) | 0x0100;
             }
-
-            self.regs.a.setl(result as u8);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.c = result > 0xff;
-            self.regs.p.v = overflow;
-            self.regs.p.z = result & 0xff == 0;
-        } else {
-            let value = !self.get_operand_u16(bus, op) as u32;
-            let a = self.regs.a.get() as u32;
-
-            let mut result = self.regs.p.c as u32;
-
-            if !self.regs.p.d {
-                result += a + value;
-            } else {
-                result += (a & 0x000F) + (value & 0x000F);
-                if result <= 0x000F {
-                    result = result.wrapping_sub(0x0006) & 0x000F;
-                }
-                result += (a & 0x00F0) + (value & 0x00F0);
-                if result <= 0x00FF {
-                    result = result.wrapping_sub(0x0060) & 0x00FF;
-                }
-                result += (a & 0x0F00) + (value & 0x0F00);
-                if result <= 0x0FFF {
-                    result = result.wrapping_sub(0x0600) & 0x0FFF;
-                }
-                result += (a & 0xF000) + (value & 0xF000);
+            result += (a & 0x0F00) + (value & 0x0F00);
+            if result >= 0x0A00 {
+                result = (result - 0x0A00) | 0x1000;
             }
+            result += (a & 0xF000) + (value & 0xF000);
+        }
 
-            let overflow = ((!(a ^ value) & (a ^ result)) & 0x8000) != 0;
-            if self.regs.p.d && result <= 0xFFFF {
-                result = result.wrapping_sub(0x6000);
+        let overflow = ((!(a ^ value) & (a ^ result)) & 0x8000) != 0;
+        if emu.cpu.regs.p.d && result >= 0xA000 {
+            result += 0x6000;
+        }
+
+        emu.cpu.regs.a.set(result as u16);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.c = result > 0xffff;
+        emu.cpu.regs.p.v = overflow;
+        emu.cpu.regs.p.z = result & 0xffff == 0;
+    }
+}
+
+fn inst_sbc(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+
+    if emu.cpu.regs.p.m {
+        let value = !get_operand_u8(emu, op) as u16;
+        let al = emu.cpu.regs.a.getl() as u16;
+
+        let mut result = emu.cpu.regs.p.c as u16;
+
+        if !emu.cpu.regs.p.d {
+            result += al + value;
+        } else {
+            result += (al & 0x0F) + (value & 0x0F);
+            if result <= 0x0F {
+                result = result.wrapping_sub(0x06) & 0x0F;
             }
-
-            self.regs.a.set(result as u16);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.c = result > 0xffff;
-            self.regs.p.v = overflow;
-            self.regs.p.z = result & 0xffff == 0;
+            result += (al & 0xF0) + (value & 0xF0);
         }
-    }
 
-    fn inst_cmp(&mut self, bus: &mut Bus, op1: Operand, addr_mode: AddressingMode) {
-        let op2 = self.read_operand(bus, addr_mode);
+        let overflow = ((!(al ^ value) & (al ^ result)) & 0x80) != 0;
+        if emu.cpu.regs.p.d && result <= 0xFF {
+            result = result.wrapping_sub(0x60);
+        }
 
-        if op1.is_not_wide(self.regs.p) {
-            let val1 = self.get_operand_u8(bus, op1);
-            let val2 = self.get_operand_u8(bus, op2);
+        emu.cpu.regs.a.setl(result as u8);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.c = result > 0xff;
+        emu.cpu.regs.p.v = overflow;
+        emu.cpu.regs.p.z = result & 0xff == 0;
+    } else {
+        let value = !get_operand_u16(emu, op) as u32;
+        let a = emu.cpu.regs.a.get() as u32;
 
-            let (diff, carry) = val1.overflowing_sub(val2);
+        let mut result = emu.cpu.regs.p.c as u32;
 
-            self.regs.p.n = diff & 0x80 != 0;
-            self.regs.p.c = !carry;
-            self.regs.p.z = diff == 0;
+        if !emu.cpu.regs.p.d {
+            result += a + value;
         } else {
-            let val1 = self.get_operand_u16(bus, op1);
-            let val2 = self.get_operand_u16(bus, op2);
-
-            let (diff, carry) = val1.overflowing_sub(val2);
-
-            self.regs.p.n = diff & 0x8000 != 0;
-            self.regs.p.c = !carry;
-            self.regs.p.z = diff == 0;
-        }
-    }
-
-    fn inst_inc(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if op.is_not_wide(self.regs.p) {
-            let result = self.get_operand_u8(bus, op).wrapping_add(1);
-            self.set_operand_u8(bus, op, result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-        } else {
-            let result = self.get_operand_u16(bus, op).wrapping_add(1);
-            self.set_operand_u16(bus, op, result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-        }
-    }
-
-    fn inst_dec(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if op.is_not_wide(self.regs.p) {
-            let result = self.get_operand_u8(bus, op).wrapping_sub(1);
-            self.set_operand_u8(bus, op, result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-        } else {
-            let result = self.get_operand_u16(bus, op).wrapping_sub(1);
-            self.set_operand_u16(bus, op, result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-        }
-    }
-
-    fn inst_and(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let result = self.regs.a.getl() & self.get_operand_u8(bus, op);
-            self.regs.a.setl(result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-        } else {
-            let result = self.regs.a.get() & self.get_operand_u16(bus, op);
-            self.regs.a.set(result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-        }
-    }
-
-    fn inst_eor(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let result = self.regs.a.getl() ^ self.get_operand_u8(bus, op);
-            self.regs.a.setl(result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-        } else {
-            let result = self.regs.a.get() ^ self.get_operand_u16(bus, op);
-            self.regs.a.set(result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-        }
-    }
-
-    fn inst_ora(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let result = self.regs.a.getl() | self.get_operand_u8(bus, op);
-            self.regs.a.setl(result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-        } else {
-            let result = self.regs.a.get() | self.get_operand_u16(bus, op);
-            self.regs.a.set(result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-        }
-    }
-
-    fn inst_bit(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let value = self.get_operand_u8(bus, op);
-            let result = self.regs.a.getl() & value;
-            if addr_mode != AddressingMode::ImmediateM {
-                self.regs.p.n = value & 0x80 != 0;
-                self.regs.p.v = value & 0x40 != 0;
+            result += (a & 0x000F) + (value & 0x000F);
+            if result <= 0x000F {
+                result = result.wrapping_sub(0x0006) & 0x000F;
             }
-            self.regs.p.z = result == 0;
-        } else {
-            let value = self.get_operand_u16(bus, op);
-            let result = self.regs.a.get() & value;
-            if addr_mode != AddressingMode::ImmediateM {
-                self.regs.p.n = value & 0x8000 != 0;
-                self.regs.p.v = value & 0x4000 != 0;
+            result += (a & 0x00F0) + (value & 0x00F0);
+            if result <= 0x00FF {
+                result = result.wrapping_sub(0x0060) & 0x00FF;
             }
-            self.regs.p.z = result == 0;
-        }
-    }
-
-    fn inst_trb(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let val = self.get_operand_u8(bus, op);
-            let mask = self.regs.a.getl();
-            self.set_operand_u8(bus, op, val & !mask);
-            self.regs.p.z = (val & mask) == 0;
-        } else {
-            let val = self.get_operand_u16(bus, op);
-            let mask = self.regs.a.get();
-            self.set_operand_u16(bus, op, val & !mask);
-            self.regs.p.z = (val & mask) == 0;
-        }
-    }
-
-    fn inst_tsb(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let val = self.get_operand_u8(bus, op);
-            let mask = self.regs.a.getl();
-            self.set_operand_u8(bus, op, val | mask);
-            self.regs.p.z = (val & mask) == 0;
-        } else {
-            let val = self.get_operand_u16(bus, op);
-            let mask = self.regs.a.get();
-            self.set_operand_u16(bus, op, val | mask);
-            self.regs.p.z = (val & mask) == 0;
-        }
-    }
-
-    fn inst_asl(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let val = self.get_operand_u8(bus, op);
-            let result = val << 1;
-            self.set_operand_u8(bus, op, result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = val & 0x80 != 0;
-        } else {
-            let val = self.get_operand_u16(bus, op);
-            let result = val << 1;
-            self.set_operand_u16(bus, op, result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = val & 0x8000 != 0;
-        }
-    }
-
-    fn inst_lsr(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let val = self.get_operand_u8(bus, op);
-            let result = val >> 1;
-            self.set_operand_u8(bus, op, result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = val & 1 != 0;
-        } else {
-            let val = self.get_operand_u16(bus, op);
-            let result = val >> 1;
-            self.set_operand_u16(bus, op, result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = val & 1 != 0;
-        }
-    }
-
-    fn inst_rol(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let val = self.get_operand_u8(bus, op);
-            let carry = self.regs.p.c;
-            let result = val << 1 | carry as u8;
-            self.set_operand_u8(bus, op, result);
-            self.regs.p.n = result & 0x80 != 0;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = val & 0x80 != 0;
-        } else {
-            let val = self.get_operand_u16(bus, op);
-            let carry = self.regs.p.c;
-            let result = val << 1 | carry as u16;
-            self.set_operand_u16(bus, op, result);
-            self.regs.p.n = result & 0x8000 != 0;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = val & 0x8000 != 0;
-        }
-    }
-
-    fn inst_ror(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let val = self.get_operand_u8(bus, op);
-            let carry = self.regs.p.c;
-            let result = val >> 1 | (carry as u8) << 7;
-            self.set_operand_u8(bus, op, result);
-            self.regs.p.n = carry;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = (val & 1) != 0;
-        } else {
-            let val = self.get_operand_u16(bus, op);
-            let carry = self.regs.p.c;
-            let result = val >> 1 | (carry as u16) << 15;
-            self.set_operand_u16(bus, op, result);
-            self.regs.p.n = carry;
-            self.regs.p.z = result == 0;
-            self.regs.p.c = (val & 1) != 0;
-        }
-    }
-
-    fn inst_branch(&mut self, bus: &mut Bus, condition: bool) {
-        let addr = self.read_pointer(bus, AddressingMode::Relative8).at(0);
-        if condition {
-            self.regs.pc.set(addr as u16);
-        }
-    }
-
-    fn inst_brl(&mut self, bus: &mut Bus) {
-        let addr = self.read_pointer(bus, AddressingMode::Relative16).at(0);
-        self.regs.k = (addr >> 16) as u8;
-        self.regs.pc.set(addr as u16);
-    }
-
-    fn inst_jmp(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let addr = self.read_pointer(bus, addr_mode).at(0);
-        self.regs.pc.set(addr as u16);
-        self.regs.k = (addr >> 16) as u8;
-    }
-
-    fn inst_jsl(&mut self, bus: &mut Bus) {
-        self.push8new(bus, self.regs.k);
-        let ret = self.regs.pc.get().wrapping_add(2);
-        self.push16new(bus, ret);
-        self.inst_jmp(bus, AddressingMode::Long);
-        self.stack_modified_new();
-    }
-
-    fn inst_jsr_old(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let ret = self.regs.pc.get().wrapping_add(1);
-        self.push16old(bus, ret);
-        self.inst_jmp(bus, addr_mode);
-    }
-
-    fn inst_jsr_new(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let ret = self.regs.pc.get().wrapping_add(1);
-        self.push16new(bus, ret);
-        self.inst_jmp(bus, addr_mode);
-        self.stack_modified_new();
-    }
-
-    fn inst_rtl(&mut self, bus: &mut Bus) {
-        let pc = self.pull16new(bus);
-        self.regs.pc.set(pc.wrapping_add(1));
-        self.regs.k = self.pull8new(bus);
-        self.stack_modified_new();
-    }
-
-    fn inst_rts(&mut self, bus: &mut Bus) {
-        let pc = self.pull16old(bus);
-        self.regs.pc.set(pc.wrapping_add(1));
-    }
-
-    fn inst_rti(&mut self, bus: &mut Bus) {
-        let is_native = !self.regs.p.e;
-
-        let p = self.pull8old(bus);
-        self.regs.p.set_from_bits(p);
-        if !is_native {
-            self.regs.p.m = true;
-            self.regs.p.xb = true;
-        }
-        self.flags_updated();
-
-        let ret = self.pull16old(bus);
-        self.regs.pc.set(ret);
-
-        if is_native {
-            self.regs.k = self.pull8old(bus);
-        }
-    }
-
-    fn inst_rep(&mut self, bus: &mut Bus) {
-        let op = self.read_operand(bus, AddressingMode::Immediate8);
-        let mask = self.get_operand_u8(bus, op);
-        let value = self.regs.p.to_bits();
-        self.regs.p.set_from_bits(value & !mask);
-        self.flags_updated();
-    }
-
-    fn inst_sep(&mut self, bus: &mut Bus) {
-        let op = self.read_operand(bus, AddressingMode::Immediate8);
-        let mask = self.get_operand_u8(bus, op);
-        let value = self.regs.p.to_bits();
-        self.regs.p.set_from_bits(value | mask);
-        self.flags_updated();
-    }
-
-    fn inst_lda(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            let value = self.get_operand_u8(bus, op);
-            self.regs.a.setl(value);
-            self.regs.p.n = value & 0x80 != 0;
-            self.regs.p.z = value == 0;
-        } else {
-            let value = self.get_operand_u16(bus, op);
-            self.regs.a.set(value);
-            self.regs.p.n = value & 0x8000 != 0;
-            self.regs.p.z = value == 0;
-        }
-    }
-
-    fn inst_ldx(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.xb {
-            let value = self.get_operand_u8(bus, op);
-            self.regs.x.setl(value);
-            self.regs.p.n = value & 0x80 != 0;
-            self.regs.p.z = value == 0;
-        } else {
-            let value = self.get_operand_u16(bus, op);
-            self.regs.x.set(value);
-            self.regs.p.n = value & 0x8000 != 0;
-            self.regs.p.z = value == 0;
-        }
-    }
-
-    fn inst_ldy(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.xb {
-            let value = self.get_operand_u8(bus, op);
-            self.regs.y.setl(value);
-            self.regs.p.n = value & 0x80 != 0;
-            self.regs.p.z = value == 0;
-        } else {
-            let value = self.get_operand_u16(bus, op);
-            self.regs.y.set(value);
-            self.regs.p.n = value & 0x8000 != 0;
-            self.regs.p.z = value == 0;
-        }
-    }
-
-    fn inst_sta(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            self.set_operand_u8(bus, op, self.regs.a.getl());
-        } else {
-            self.set_operand_u16(bus, op, self.regs.a.get());
-        }
-    }
-
-    fn inst_stx(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.xb {
-            self.set_operand_u8(bus, op, self.regs.x.getl());
-        } else {
-            self.set_operand_u16(bus, op, self.regs.x.get());
-        }
-    }
-
-    fn inst_sty(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.xb {
-            self.set_operand_u8(bus, op, self.regs.y.getl());
-        } else {
-            self.set_operand_u16(bus, op, self.regs.y.get());
-        }
-    }
-
-    fn inst_stz(&mut self, bus: &mut Bus, addr_mode: AddressingMode) {
-        let op = self.read_operand(bus, addr_mode);
-        if self.regs.p.m {
-            self.set_operand_u8(bus, op, 0);
-        } else {
-            self.set_operand_u16(bus, op, 0);
-        }
-    }
-
-    fn inst_mvn_mvp(&mut self, bus: &mut Bus, step: i16) {
-        let dst_bank = self.next_instr_byte(bus);
-        let src_bank = self.next_instr_byte(bus);
-
-        let src_offset = self.regs.x.get();
-        let dst_offset = self.regs.y.get();
-
-        let src = (src_bank as u32) << 16 | src_offset as u32;
-        let dst = (dst_bank as u32) << 16 | dst_offset as u32;
-
-        self.regs.dbr = dst_bank;
-        let value = bus.read(src);
-        bus.write(dst, value);
-
-        let mut next_x = src_offset.wrapping_add_signed(step);
-        let mut next_y = dst_offset.wrapping_add_signed(step);
-
-        if self.regs.p.xb {
-            next_x &= 0xFF;
-            next_y &= 0xFF;
-        }
-
-        self.regs.x.set(next_x);
-        self.regs.y.set(next_y);
-
-        let remaining = self.regs.a.get().wrapping_sub(1);
-        self.regs.a.set(remaining);
-
-        if remaining != 0xFFFF {
-            self.regs.pc.set(self.regs.pc.get().wrapping_sub(3));
-        }
-    }
-
-    fn inst_pea(&mut self, bus: &mut Bus) {
-        let ll = self.next_instr_byte(bus) as u16;
-        let hh = self.next_instr_byte(bus) as u16;
-        let value = hh << 8 | ll;
-        self.push16new(bus, value);
-        self.stack_modified_new();
-    }
-
-    fn inst_pei(&mut self, bus: &mut Bus) {
-        let op = self.read_operand(bus, AddressingMode::DirectNew);
-        let value = self.get_operand_u16(bus, op);
-        self.push16new(bus, value);
-        self.stack_modified_new();
-    }
-
-    fn inst_per(&mut self, bus: &mut Bus) {
-        let pointer = self.read_pointer(bus, AddressingMode::Relative16);
-        self.push16new(bus, pointer.at(0) as u16);
-        self.stack_modified_new();
-    }
-
-    fn inst_push_reg(&mut self, bus: &mut Bus, op: Operand) {
-        if op.is_not_wide(self.regs.p) {
-            let value = self.get_operand_u8(bus, op);
-            self.push8old(bus, value);
-        } else {
-            let value = self.get_operand_u16(bus, op);
-            self.push16old(bus, value);
-        }
-    }
-
-    fn inst_pull_reg(&mut self, bus: &mut Bus, op: Operand) {
-        if op.is_not_wide(self.regs.p) {
-            let value = self.pull8old(bus);
-            self.set_operand_u8(bus, op, value);
-            self.regs.p.n = value & 0x80 != 0;
-            self.regs.p.z = value == 0;
-        } else {
-            let value = self.pull16old(bus);
-            self.set_operand_u16(bus, op, value);
-            self.regs.p.n = value & 0x8000 != 0;
-            self.regs.p.z = value == 0;
-        }
-    }
-
-    fn inst_phb(&mut self, bus: &mut Bus) {
-        self.push8new(bus, self.regs.dbr);
-        self.stack_modified_new();
-    }
-
-    fn inst_phd(&mut self, bus: &mut Bus) {
-        self.push16new(bus, self.regs.d.get());
-        self.stack_modified_new();
-    }
-
-    fn inst_phk(&mut self, bus: &mut Bus) {
-        self.push8new(bus, self.regs.k);
-        self.stack_modified_new();
-    }
-
-    fn inst_php(&mut self, bus: &mut Bus) {
-        self.push8old(bus, self.regs.p.to_bits());
-    }
-
-    fn inst_plb(&mut self, bus: &mut Bus) {
-        let value = self.pull8new(bus);
-        self.stack_modified_new();
-        self.regs.dbr = value;
-        self.regs.p.n = value & 0x80 != 0;
-        self.regs.p.z = value == 0;
-    }
-
-    fn inst_pld(&mut self, bus: &mut Bus) {
-        let value = self.pull16new(bus);
-        self.stack_modified_new();
-        self.regs.d.set(value);
-        self.regs.p.n = value & 0x8000 != 0;
-        self.regs.p.z = value == 0;
-    }
-
-    fn inst_plp(&mut self, bus: &mut Bus) {
-        let value = self.pull8old(bus);
-        self.regs.p.set_from_bits(value);
-        self.flags_updated();
-    }
-
-    fn inst_transfer(&mut self, bus: &mut Bus, src: Operand, dst: Operand) {
-        if dst.is_not_wide(self.regs.p) {
-            let value = self.get_operand_u8(bus, src);
-            self.set_operand_u8(bus, dst, value);
-            self.regs.p.n = value & 0x80 != 0;
-            self.regs.p.z = value == 0;
-        } else {
-            let value = self.get_operand_u16(bus, src);
-            self.set_operand_u16(bus, dst, value);
-            self.regs.p.n = value & 0x8000 != 0;
-            self.regs.p.z = value == 0;
-        }
-    }
-
-    fn inst_tsx(&mut self) {
-        if self.regs.p.xb {
-            let value = self.regs.s.getl();
-            self.regs.x.setl(value);
-            self.regs.p.n = value & 0x80 != 0;
-            self.regs.p.z = value == 0;
-        } else {
-            let value = self.regs.s.get();
-            self.regs.x.set(value);
-            self.regs.p.n = value & 0x8000 != 0;
-            self.regs.p.z = value == 0;
-        }
-    }
-
-    fn inst_txs(&mut self) {
-        if self.regs.p.e {
-            self.regs.s.setl(self.regs.x.getl());
-        } else {
-            self.regs.s.set(self.regs.x.get());
-        }
-    }
-
-    fn inst_tcd(&mut self) {
-        let value = self.regs.a.get();
-        self.regs.d.set(value);
-        self.regs.p.n = value & 0x8000 != 0;
-        self.regs.p.z = value == 0;
-    }
-
-    fn inst_tcs(&mut self) {
-        if self.regs.p.e {
-            self.regs.s.setl(self.regs.a.getl());
-        } else {
-            self.regs.s.set(self.regs.a.get());
-        }
-    }
-
-    fn inst_tdc(&mut self) {
-        let value = self.regs.d.get();
-        self.regs.a.set(value);
-        self.regs.p.n = value & 0x8000 != 0;
-        self.regs.p.z = value == 0;
-    }
-
-    fn inst_tsc(&mut self) {
-        let value = self.regs.s.get();
-        self.regs.a.set(value);
-        self.regs.p.n = value & 0x8000 != 0;
-        self.regs.p.z = value == 0;
-    }
-
-    fn inst_xba(&mut self) {
-        let swapped = self.regs.a.get().swap_bytes();
-        self.regs.a.set(swapped);
-        self.regs.p.n = swapped & 0x0080 != 0;
-        self.regs.p.z = swapped & 0x00ff == 0;
-    }
-
-    fn inst_xce(&mut self) {
-        let tmp = self.regs.p.c;
-        self.regs.p.c = self.regs.p.e;
-        self.regs.p.e = tmp;
-
-        self.flags_updated();
-    }
-
-    fn flags_updated(&mut self) {
-        if self.regs.p.e {
-            self.regs.p.m = true;
-            self.regs.p.xb = true;
-            self.regs.s.seth(0x01);
-        }
-
-        if self.regs.p.xb {
-            self.regs.x.seth(0x00);
-            self.regs.y.seth(0x00);
-        }
-    }
-
-    fn stack_modified_new(&mut self) {
-        if self.regs.p.e {
-            self.regs.s.seth(0x01);
-        }
-    }
-
-    #[cold]
-    fn process_dma(&mut self, bus: &mut Bus) -> StepResult {
-        // FIXME: A DMA could write into the channels, in order to accurately emulate the transfer
-        // even in that case, we must figure out in which order the registers should be read and
-        // written here. The code below accesses the registers in no particular order.
-
-        // FIXME: What exactly happens when the last unit is only written partially?
-
-        let idx = bus.cpu.mdmaen.trailing_zeros() as usize;
-        let mut channel = &mut bus.dma.channels[idx];
-
-        if channel.das > 0 {
-            let offset = self.dma_counter >> 1;
-
-            match channel.dmap.transfer_unit_select() {
-                super::dma::TransferUnitSelect::WO2Bytes2Regs
-                | super::dma::TransferUnitSelect::WO4Bytes2Regs => {
-                    self.dma_counter ^= 2;
-                }
-                super::dma::TransferUnitSelect::WT4Bytes2Regs => {
-                    self.dma_counter = (self.dma_counter + 1) & 0x03;
-                }
-                super::dma::TransferUnitSelect::WO4Bytes4Regs => {
-                    self.dma_counter = (self.dma_counter + 2) & 0x7;
-                }
-                _ => (),
-            };
-
-            let mut src_addr = (channel.a1b as u32) << 16 | (channel.a1t as u32);
-            let mut dst_addr = 0x2100 | ((channel.bbad + offset) as u32);
-
-            if channel.dmap.transfer_direction() == super::dma::TransferDirection::BToA {
-                std::mem::swap(&mut src_addr, &mut dst_addr);
+            result += (a & 0x0F00) + (value & 0x0F00);
+            if result <= 0x0FFF {
+                result = result.wrapping_sub(0x0600) & 0x0FFF;
             }
+            result += (a & 0xF000) + (value & 0xF000);
+        }
 
-            // FIXME: Differentiate between A & B bus
-            let byte = bus.read(src_addr);
-            bus.write(dst_addr, byte);
+        let overflow = ((!(a ^ value) & (a ^ result)) & 0x8000) != 0;
+        if emu.cpu.regs.p.d && result <= 0xFFFF {
+            result = result.wrapping_sub(0x6000);
+        }
 
-            channel = &mut bus.dma.channels[idx];
+        emu.cpu.regs.a.set(result as u16);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.c = result > 0xffff;
+        emu.cpu.regs.p.v = overflow;
+        emu.cpu.regs.p.z = result & 0xffff == 0;
+    }
+}
 
-            match channel.dmap.a_bus_address_step() {
-                super::dma::ABusAddressStep::Increment => channel.a1t = channel.a1t.wrapping_add(1),
-                super::dma::ABusAddressStep::Decrement => channel.a1t = channel.a1t.wrapping_sub(1),
-                _ => (),
+fn inst_cmp(emu: &mut Snes, op1: Operand, addr_mode: AddressingMode) {
+    let op2 = read_operand(emu, addr_mode);
+
+    if op1.is_not_wide(emu.cpu.regs.p) {
+        let val1 = get_operand_u8(emu, op1);
+        let val2 = get_operand_u8(emu, op2);
+
+        let (diff, carry) = val1.overflowing_sub(val2);
+
+        emu.cpu.regs.p.n = diff & 0x80 != 0;
+        emu.cpu.regs.p.c = !carry;
+        emu.cpu.regs.p.z = diff == 0;
+    } else {
+        let val1 = get_operand_u16(emu, op1);
+        let val2 = get_operand_u16(emu, op2);
+
+        let (diff, carry) = val1.overflowing_sub(val2);
+
+        emu.cpu.regs.p.n = diff & 0x8000 != 0;
+        emu.cpu.regs.p.c = !carry;
+        emu.cpu.regs.p.z = diff == 0;
+    }
+}
+
+fn inst_inc(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if op.is_not_wide(emu.cpu.regs.p) {
+        let result = get_operand_u8(emu, op).wrapping_add(1);
+        set_operand_u8(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    } else {
+        let result = get_operand_u16(emu, op).wrapping_add(1);
+        set_operand_u16(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    }
+}
+
+fn inst_dec(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if op.is_not_wide(emu.cpu.regs.p) {
+        let result = get_operand_u8(emu, op).wrapping_sub(1);
+        set_operand_u8(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    } else {
+        let result = get_operand_u16(emu, op).wrapping_sub(1);
+        set_operand_u16(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    }
+}
+
+fn inst_and(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let result = emu.cpu.regs.a.getl() & get_operand_u8(emu, op);
+        emu.cpu.regs.a.setl(result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    } else {
+        let result = emu.cpu.regs.a.get() & get_operand_u16(emu, op);
+        emu.cpu.regs.a.set(result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    }
+}
+
+fn inst_eor(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let result = emu.cpu.regs.a.getl() ^ get_operand_u8(emu, op);
+        emu.cpu.regs.a.setl(result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    } else {
+        let result = emu.cpu.regs.a.get() ^ get_operand_u16(emu, op);
+        emu.cpu.regs.a.set(result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    }
+}
+
+fn inst_ora(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let result = emu.cpu.regs.a.getl() | get_operand_u8(emu, op);
+        emu.cpu.regs.a.setl(result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    } else {
+        let result = emu.cpu.regs.a.get() | get_operand_u16(emu, op);
+        emu.cpu.regs.a.set(result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+    }
+}
+
+fn inst_bit(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let value = get_operand_u8(emu, op);
+        let result = emu.cpu.regs.a.getl() & value;
+        if addr_mode != AddressingMode::ImmediateM {
+            emu.cpu.regs.p.n = value & 0x80 != 0;
+            emu.cpu.regs.p.v = value & 0x40 != 0;
+        }
+        emu.cpu.regs.p.z = result == 0;
+    } else {
+        let value = get_operand_u16(emu, op);
+        let result = emu.cpu.regs.a.get() & value;
+        if addr_mode != AddressingMode::ImmediateM {
+            emu.cpu.regs.p.n = value & 0x8000 != 0;
+            emu.cpu.regs.p.v = value & 0x4000 != 0;
+        }
+        emu.cpu.regs.p.z = result == 0;
+    }
+}
+
+fn inst_trb(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let val = get_operand_u8(emu, op);
+        let mask = emu.cpu.regs.a.getl();
+        set_operand_u8(emu, op, val & !mask);
+        emu.cpu.regs.p.z = (val & mask) == 0;
+    } else {
+        let val = get_operand_u16(emu, op);
+        let mask = emu.cpu.regs.a.get();
+        set_operand_u16(emu, op, val & !mask);
+        emu.cpu.regs.p.z = (val & mask) == 0;
+    }
+}
+
+fn inst_tsb(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let val = get_operand_u8(emu, op);
+        let mask = emu.cpu.regs.a.getl();
+        set_operand_u8(emu, op, val | mask);
+        emu.cpu.regs.p.z = (val & mask) == 0;
+    } else {
+        let val = get_operand_u16(emu, op);
+        let mask = emu.cpu.regs.a.get();
+        set_operand_u16(emu, op, val | mask);
+        emu.cpu.regs.p.z = (val & mask) == 0;
+    }
+}
+
+fn inst_asl(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let val = get_operand_u8(emu, op);
+        let result = val << 1;
+        set_operand_u8(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = val & 0x80 != 0;
+    } else {
+        let val = get_operand_u16(emu, op);
+        let result = val << 1;
+        set_operand_u16(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = val & 0x8000 != 0;
+    }
+}
+
+fn inst_lsr(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let val = get_operand_u8(emu, op);
+        let result = val >> 1;
+        set_operand_u8(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = val & 1 != 0;
+    } else {
+        let val = get_operand_u16(emu, op);
+        let result = val >> 1;
+        set_operand_u16(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = val & 1 != 0;
+    }
+}
+
+fn inst_rol(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let val = get_operand_u8(emu, op);
+        let carry = emu.cpu.regs.p.c;
+        let result = val << 1 | carry as u8;
+        set_operand_u8(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x80 != 0;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = val & 0x80 != 0;
+    } else {
+        let val = get_operand_u16(emu, op);
+        let carry = emu.cpu.regs.p.c;
+        let result = val << 1 | carry as u16;
+        set_operand_u16(emu, op, result);
+        emu.cpu.regs.p.n = result & 0x8000 != 0;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = val & 0x8000 != 0;
+    }
+}
+
+fn inst_ror(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let val = get_operand_u8(emu, op);
+        let carry = emu.cpu.regs.p.c;
+        let result = val >> 1 | (carry as u8) << 7;
+        set_operand_u8(emu, op, result);
+        emu.cpu.regs.p.n = carry;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = (val & 1) != 0;
+    } else {
+        let val = get_operand_u16(emu, op);
+        let carry = emu.cpu.regs.p.c;
+        let result = val >> 1 | (carry as u16) << 15;
+        set_operand_u16(emu, op, result);
+        emu.cpu.regs.p.n = carry;
+        emu.cpu.regs.p.z = result == 0;
+        emu.cpu.regs.p.c = (val & 1) != 0;
+    }
+}
+
+fn inst_branch(emu: &mut Snes, condition: bool) {
+    let addr = read_pointer(emu, AddressingMode::Relative8).low;
+    if condition {
+        emu.cpu.regs.pc.set(addr as u16);
+    }
+}
+
+fn inst_brl(emu: &mut Snes) {
+    let addr = read_pointer(emu, AddressingMode::Relative16).low;
+    emu.cpu.regs.k = (addr >> 16) as u8;
+    emu.cpu.regs.pc.set(addr as u16);
+}
+
+fn inst_jmp(emu: &mut Snes, addr_mode: AddressingMode) {
+    let addr = read_pointer(emu, addr_mode).low;
+    emu.cpu.regs.pc.set(addr as u16);
+    emu.cpu.regs.k = (addr >> 16) as u8;
+}
+
+fn inst_jsl(emu: &mut Snes) {
+    push8new(emu, emu.cpu.regs.k);
+    let ret = emu.cpu.regs.pc.get().wrapping_add(2);
+    push16new(emu, ret);
+    inst_jmp(emu, AddressingMode::Long);
+    stack_modified_new(emu);
+}
+
+fn inst_jsr_old(emu: &mut Snes, addr_mode: AddressingMode) {
+    let ret = emu.cpu.regs.pc.get().wrapping_add(1);
+    push16old(emu, ret);
+    inst_jmp(emu, addr_mode);
+}
+
+fn inst_jsr_new(emu: &mut Snes, addr_mode: AddressingMode) {
+    let ret = emu.cpu.regs.pc.get().wrapping_add(1);
+    push16new(emu, ret);
+    inst_jmp(emu, addr_mode);
+    stack_modified_new(emu);
+}
+
+fn inst_rtl(emu: &mut Snes) {
+    let pc = pull16new(emu);
+    emu.cpu.regs.pc.set(pc.wrapping_add(1));
+    emu.cpu.regs.k = pull8new(emu);
+    stack_modified_new(emu);
+}
+
+fn inst_rts(emu: &mut Snes) {
+    let pc = pull16old(emu);
+    emu.cpu.regs.pc.set(pc.wrapping_add(1));
+}
+
+fn inst_rti(emu: &mut Snes) {
+    let is_native = !emu.cpu.regs.p.e;
+
+    let p = pull8old(emu);
+    emu.cpu.regs.p.set_from_bits(p);
+    if !is_native {
+        emu.cpu.regs.p.m = true;
+        emu.cpu.regs.p.xb = true;
+    }
+    flags_updated(emu);
+
+    let ret = pull16old(emu);
+    emu.cpu.regs.pc.set(ret);
+
+    if is_native {
+        emu.cpu.regs.k = pull8old(emu);
+    }
+}
+
+fn inst_rep(emu: &mut Snes) {
+    let op = read_operand(emu, AddressingMode::Immediate8);
+    let mask = get_operand_u8(emu, op);
+    let value = emu.cpu.regs.p.to_bits();
+    emu.cpu.regs.p.set_from_bits(value & !mask);
+    flags_updated(emu);
+}
+
+fn inst_sep(emu: &mut Snes) {
+    let op = read_operand(emu, AddressingMode::Immediate8);
+    let mask = get_operand_u8(emu, op);
+    let value = emu.cpu.regs.p.to_bits();
+    emu.cpu.regs.p.set_from_bits(value | mask);
+    flags_updated(emu);
+}
+
+fn inst_lda(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        let value = get_operand_u8(emu, op);
+        emu.cpu.regs.a.setl(value);
+        emu.cpu.regs.p.n = value & 0x80 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    } else {
+        let value = get_operand_u16(emu, op);
+        emu.cpu.regs.a.set(value);
+        emu.cpu.regs.p.n = value & 0x8000 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    }
+}
+
+fn inst_ldx(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.xb {
+        let value = get_operand_u8(emu, op);
+        emu.cpu.regs.x.setl(value);
+        emu.cpu.regs.p.n = value & 0x80 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    } else {
+        let value = get_operand_u16(emu, op);
+        emu.cpu.regs.x.set(value);
+        emu.cpu.regs.p.n = value & 0x8000 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    }
+}
+
+fn inst_ldy(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.xb {
+        let value = get_operand_u8(emu, op);
+        emu.cpu.regs.y.setl(value);
+        emu.cpu.regs.p.n = value & 0x80 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    } else {
+        let value = get_operand_u16(emu, op);
+        emu.cpu.regs.y.set(value);
+        emu.cpu.regs.p.n = value & 0x8000 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    }
+}
+
+fn inst_sta(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        set_operand_u8(emu, op, emu.cpu.regs.a.getl());
+    } else {
+        set_operand_u16(emu, op, emu.cpu.regs.a.get());
+    }
+}
+
+fn inst_stx(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.xb {
+        set_operand_u8(emu, op, emu.cpu.regs.x.getl());
+    } else {
+        set_operand_u16(emu, op, emu.cpu.regs.x.get());
+    }
+}
+
+fn inst_sty(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.xb {
+        set_operand_u8(emu, op, emu.cpu.regs.y.getl());
+    } else {
+        set_operand_u16(emu, op, emu.cpu.regs.y.get());
+    }
+}
+
+fn inst_stz(emu: &mut Snes, addr_mode: AddressingMode) {
+    let op = read_operand(emu, addr_mode);
+    if emu.cpu.regs.p.m {
+        set_operand_u8(emu, op, 0);
+    } else {
+        set_operand_u16(emu, op, 0);
+    }
+}
+
+fn inst_mvn_mvp(emu: &mut Snes, step: i16) {
+    let dst_bank = next_instr_byte(emu);
+    let src_bank = next_instr_byte(emu);
+
+    let src_offset = emu.cpu.regs.x.get();
+    let dst_offset = emu.cpu.regs.y.get();
+
+    let src = (src_bank as u32) << 16 | src_offset as u32;
+    let dst = (dst_bank as u32) << 16 | dst_offset as u32;
+
+    emu.cpu.regs.dbr = dst_bank;
+    let value = emu.read(src);
+    emu.write(dst, value);
+
+    let mut next_x = src_offset.wrapping_add_signed(step);
+    let mut next_y = dst_offset.wrapping_add_signed(step);
+
+    if emu.cpu.regs.p.xb {
+        next_x &= 0xFF;
+        next_y &= 0xFF;
+    }
+
+    emu.cpu.regs.x.set(next_x);
+    emu.cpu.regs.y.set(next_y);
+
+    let remaining = emu.cpu.regs.a.get().wrapping_sub(1);
+    emu.cpu.regs.a.set(remaining);
+
+    if remaining != 0xFFFF {
+        emu.cpu.regs.pc.set(emu.cpu.regs.pc.get().wrapping_sub(3));
+    }
+}
+
+fn inst_pea(emu: &mut Snes) {
+    let ll = next_instr_byte(emu) as u16;
+    let hh = next_instr_byte(emu) as u16;
+    let value = hh << 8 | ll;
+    push16new(emu, value);
+    stack_modified_new(emu);
+}
+
+fn inst_pei(emu: &mut Snes) {
+    let op = read_operand(emu, AddressingMode::DirectNew);
+    let value = get_operand_u16(emu, op);
+    push16new(emu, value);
+    stack_modified_new(emu);
+}
+
+fn inst_per(emu: &mut Snes) {
+    let pointer = read_pointer(emu, AddressingMode::Relative16);
+    push16new(emu, pointer.low as u16);
+    stack_modified_new(emu);
+}
+
+fn inst_push_reg(emu: &mut Snes, op: Operand) {
+    if op.is_not_wide(emu.cpu.regs.p) {
+        let value = get_operand_u8(emu, op);
+        push8old(emu, value);
+    } else {
+        let value = get_operand_u16(emu, op);
+        push16old(emu, value);
+    }
+}
+
+fn inst_pull_reg(emu: &mut Snes, op: Operand) {
+    if op.is_not_wide(emu.cpu.regs.p) {
+        let value = pull8old(emu);
+        set_operand_u8(emu, op, value);
+        emu.cpu.regs.p.n = value & 0x80 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    } else {
+        let value = pull16old(emu);
+        set_operand_u16(emu, op, value);
+        emu.cpu.regs.p.n = value & 0x8000 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    }
+}
+
+fn inst_phb(emu: &mut Snes) {
+    push8new(emu, emu.cpu.regs.dbr);
+    stack_modified_new(emu);
+}
+
+fn inst_phd(emu: &mut Snes) {
+    push16new(emu, emu.cpu.regs.d.get());
+    stack_modified_new(emu);
+}
+
+fn inst_phk(emu: &mut Snes) {
+    push8new(emu, emu.cpu.regs.k);
+    stack_modified_new(emu);
+}
+
+fn inst_php(emu: &mut Snes) {
+    push8old(emu, emu.cpu.regs.p.to_bits());
+}
+
+fn inst_plb(emu: &mut Snes) {
+    let value = pull8new(emu);
+    stack_modified_new(emu);
+    emu.cpu.regs.dbr = value;
+    emu.cpu.regs.p.n = value & 0x80 != 0;
+    emu.cpu.regs.p.z = value == 0;
+}
+
+fn inst_pld(emu: &mut Snes) {
+    let value = pull16new(emu);
+    stack_modified_new(emu);
+    emu.cpu.regs.d.set(value);
+    emu.cpu.regs.p.n = value & 0x8000 != 0;
+    emu.cpu.regs.p.z = value == 0;
+}
+
+fn inst_plp(emu: &mut Snes) {
+    let value = pull8old(emu);
+    emu.cpu.regs.p.set_from_bits(value);
+    flags_updated(emu);
+}
+
+fn inst_transfer(emu: &mut Snes, src: Operand, dst: Operand) {
+    if dst.is_not_wide(emu.cpu.regs.p) {
+        let value = get_operand_u8(emu, src);
+        set_operand_u8(emu, dst, value);
+        emu.cpu.regs.p.n = value & 0x80 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    } else {
+        let value = get_operand_u16(emu, src);
+        set_operand_u16(emu, dst, value);
+        emu.cpu.regs.p.n = value & 0x8000 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    }
+}
+
+fn inst_tsx(emu: &mut Snes) {
+    if emu.cpu.regs.p.xb {
+        let value = emu.cpu.regs.s.getl();
+        emu.cpu.regs.x.setl(value);
+        emu.cpu.regs.p.n = value & 0x80 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    } else {
+        let value = emu.cpu.regs.s.get();
+        emu.cpu.regs.x.set(value);
+        emu.cpu.regs.p.n = value & 0x8000 != 0;
+        emu.cpu.regs.p.z = value == 0;
+    }
+}
+
+fn inst_txs(emu: &mut Snes) {
+    if emu.cpu.regs.p.e {
+        emu.cpu.regs.s.setl(emu.cpu.regs.x.getl());
+    } else {
+        emu.cpu.regs.s.set(emu.cpu.regs.x.get());
+    }
+}
+
+fn inst_tcd(emu: &mut Snes) {
+    let value = emu.cpu.regs.a.get();
+    emu.cpu.regs.d.set(value);
+    emu.cpu.regs.p.n = value & 0x8000 != 0;
+    emu.cpu.regs.p.z = value == 0;
+}
+
+fn inst_tcs(emu: &mut Snes) {
+    if emu.cpu.regs.p.e {
+        emu.cpu.regs.s.setl(emu.cpu.regs.a.getl());
+    } else {
+        emu.cpu.regs.s.set(emu.cpu.regs.a.get());
+    }
+}
+
+fn inst_tdc(emu: &mut Snes) {
+    let value = emu.cpu.regs.d.get();
+    emu.cpu.regs.a.set(value);
+    emu.cpu.regs.p.n = value & 0x8000 != 0;
+    emu.cpu.regs.p.z = value == 0;
+}
+
+fn inst_tsc(emu: &mut Snes) {
+    let value = emu.cpu.regs.s.get();
+    emu.cpu.regs.a.set(value);
+    emu.cpu.regs.p.n = value & 0x8000 != 0;
+    emu.cpu.regs.p.z = value == 0;
+}
+
+fn inst_xba(emu: &mut Snes) {
+    let swapped = emu.cpu.regs.a.get().swap_bytes();
+    emu.cpu.regs.a.set(swapped);
+    emu.cpu.regs.p.n = swapped & 0x0080 != 0;
+    emu.cpu.regs.p.z = swapped & 0x00ff == 0;
+}
+
+fn inst_xce(emu: &mut Snes) {
+    let tmp = emu.cpu.regs.p.c;
+    emu.cpu.regs.p.c = emu.cpu.regs.p.e;
+    emu.cpu.regs.p.e = tmp;
+
+    flags_updated(emu);
+}
+
+fn flags_updated(emu: &mut Snes) {
+    if emu.cpu.regs.p.e {
+        emu.cpu.regs.p.m = true;
+        emu.cpu.regs.p.xb = true;
+        emu.cpu.regs.s.seth(0x01);
+    }
+
+    if emu.cpu.regs.p.xb {
+        emu.cpu.regs.x.seth(0x00);
+        emu.cpu.regs.y.seth(0x00);
+    }
+}
+
+fn stack_modified_new(emu: &mut Snes) {
+    if emu.cpu.regs.p.e {
+        emu.cpu.regs.s.seth(0x01);
+    }
+}
+
+#[cold]
+fn process_dma(emu: &mut Snes) -> StepResult {
+    // FIXME: A DMA could write into the channels, in order to accurately emulate the transfer
+    // even in that case, we must figure out in which order the registers should be read and
+    // written here. The code below accesses the registers in no particular order.
+
+    // FIXME: What exactly happens when the last unit is only written partially?
+
+    let idx = emu.cpu_io.mdmaen.trailing_zeros() as usize;
+    let mut channel = &mut emu.dma.channels[idx];
+
+    if channel.das > 0 {
+        let offset = emu.cpu.dma_counter >> 1;
+
+        match channel.dmap.transfer_unit_select() {
+            super::dma::TransferUnitSelect::WO2Bytes2Regs
+            | super::dma::TransferUnitSelect::WO4Bytes2Regs => {
+                emu.cpu.dma_counter ^= 2;
             }
+            super::dma::TransferUnitSelect::WT4Bytes2Regs => {
+                emu.cpu.dma_counter = (emu.cpu.dma_counter + 1) & 0x03;
+            }
+            super::dma::TransferUnitSelect::WO4Bytes4Regs => {
+                emu.cpu.dma_counter = (emu.cpu.dma_counter + 2) & 0x7;
+            }
+            _ => (),
+        };
 
-            channel.das -= 1;
+        let mut src_addr = (channel.a1b as u32) << 16 | (channel.a1t as u32);
+        let mut dst_addr = 0x2100 | ((channel.bbad + offset) as u32);
+
+        if channel.dmap.transfer_direction() == super::dma::TransferDirection::BToA {
+            std::mem::swap(&mut src_addr, &mut dst_addr);
         }
 
-        if channel.das == 0 {
-            self.dma_counter = 0;
-            bus.cpu.mdmaen ^= 1 << idx;
+        // FIXME: Differentiate between A & B bus
+        let byte = emu.read(src_addr);
+        emu.write(dst_addr, byte);
+
+        channel = &mut emu.dma.channels[idx];
+
+        match channel.dmap.a_bus_address_step() {
+            super::dma::ABusAddressStep::Increment => channel.a1t = channel.a1t.wrapping_add(1),
+            super::dma::ABusAddressStep::Decrement => channel.a1t = channel.a1t.wrapping_sub(1),
+            _ => (),
         }
 
+        channel.das -= 1;
+    }
+
+    if channel.das == 0 {
+        emu.cpu.dma_counter = 0;
+        emu.cpu_io.mdmaen ^= 1 << idx;
+    }
+
+    return StepResult::Stepped;
+}
+
+#[cold]
+fn process_interrupt(emu: &mut Snes) {
+    let mask = !(((emu.cpu.regs.p.i & !emu.cpu.waiting) as u8) << INT_IRQ);
+
+    let interrupt = (emu.cpu_io.pending_interrupts & mask).trailing_zeros();
+    if interrupt >= u8::BITS {
+        return;
+    }
+
+    emu.cpu_io.pending_interrupts &= !(1 << interrupt);
+
+    match interrupt as u8 {
+        INT_RESET => int_reset(emu),
+        INT_NMI => enter_interrupt_handler(emu, Interrupt::Nmi),
+        INT_ABORT => todo!(),
+        INT_IRQ => {
+            if !emu.cpu.regs.p.i {
+                enter_interrupt_handler(emu, Interrupt::Irq);
+            }
+        }
+        INT_COP => int_cop(emu),
+        INT_BREAK => int_break(emu),
+        _ => unreachable!(),
+    }
+}
+
+pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
+    if emu.cpu_io.mdmaen != 0 {
+        return process_dma(emu);
+    }
+
+    if emu.cpu.stopped {
         return StepResult::Stepped;
     }
 
-    #[cold]
-    fn process_interrupt(&mut self, bus: &mut Bus) {
-        let mask = !(((self.regs.p.i & !self.waiting) as u8) << INT_IRQ);
+    emu.cpu_io.pending_interrupts |= (emu.cpu_io.nmi_pending as u8) << INT_NMI;
+    emu.cpu_io.pending_interrupts |= (emu.cpu_io.timeup_hv_count_timer_irq_flag as u8) << INT_IRQ;
+    emu.cpu_io.nmi_pending = false;
 
-        let interrupt = (bus.cpu.pending_interrupts & mask).trailing_zeros();
-        if interrupt >= u8::BITS {
-            return;
-        }
+    if emu.cpu_io.pending_interrupts != 0 {
+        process_interrupt(emu);
+        emu.cpu.waiting = false;
+    }
 
-        bus.cpu.pending_interrupts &= !(1 << interrupt);
+    if emu.cpu.waiting {
+        return StepResult::Stepped;
+    }
 
-        match interrupt as u8 {
-            INT_RESET => self.int_reset(bus),
-            INT_NMI => self.enter_interrupt_handler(bus, Interrupt::Nmi),
-            INT_ABORT => todo!(),
-            INT_IRQ => {
-                if !self.regs.p.i {
-                    self.enter_interrupt_handler(bus, Interrupt::Irq);
-                }
-            }
-            INT_COP => self.int_cop(bus),
-            INT_BREAK => self.int_break(bus),
-            _ => unreachable!(),
+    if !ignore_breakpoints && !emu.cpu.debug.breakpoints.is_empty() {
+        let pc = (emu.cpu.regs.k as u32) << 16 | emu.cpu.regs.pc.get() as u32;
+        if emu.cpu.debug.breakpoints.contains(&pc) {
+            return StepResult::BreakpointHit;
         }
     }
 
-    pub fn step(&mut self, bus: &mut Bus, ignore_breakpoints: bool) -> StepResult {
-        if bus.cpu.mdmaen != 0 {
-            return self.process_dma(bus);
-        }
+    let instruction = &mut [crate::disasm::Instruction::default()];
+    crate::disasm::disassemble(emu, instruction);
 
-        if self.stopped {
-            return StepResult::Stepped;
-        }
+    emu.cpu.debug.execution_history[emu.cpu.debug.execution_history_pos] = instruction[0];
+    emu.cpu.debug.execution_history_pos =
+        (emu.cpu.debug.execution_history_pos + 1) % emu.cpu.debug.execution_history.len();
 
-        bus.cpu.pending_interrupts |= (bus.cpu.nmi_pending as u8) << INT_NMI;
-        bus.cpu.pending_interrupts |= (bus.cpu.timeup_hv_count_timer_irq_flag as u8) << INT_IRQ;
-        bus.cpu.nmi_pending = false;
+    let pc = (emu.cpu.regs.k as u32) << 16 | emu.cpu.regs.pc.get() as u32;
+    emu.cpu.debug.encountered_instructions[pc as usize] = Some(instruction[0]);
 
-        if bus.cpu.pending_interrupts != 0 {
-            self.process_interrupt(bus);
-            self.waiting = false;
-        }
+    let op = next_instr_byte(emu);
 
-        if self.waiting {
-            return StepResult::Stepped;
-        }
-
-        if !ignore_breakpoints && !self.debug.breakpoints.is_empty() {
-            let pc = (self.regs.k as u32) << 16 | self.regs.pc.get() as u32;
-            if self.debug.breakpoints.contains(&pc) {
-                return StepResult::BreakpointHit;
-            }
-        }
-
-        let instruction = &mut [crate::disasm::Instruction::default()];
-        crate::disasm::disassemble(self, bus, instruction);
-
-        self.debug.execution_history[self.debug.execution_history_pos] = instruction[0];
-        self.debug.execution_history_pos =
-            (self.debug.execution_history_pos + 1) % self.debug.execution_history.len();
-
-        let pc = (self.regs.k as u32) << 16 | self.regs.pc.get() as u32;
-        self.debug.encountered_instructions[pc as usize] = Some(instruction[0]);
-
-        let op = self.next_instr_byte(bus);
-
-        match op {
-            // ADC
-            0x61 => self.inst_adc(bus, AddressingMode::DirectXParens),
-            0x63 => self.inst_adc(bus, AddressingMode::StackS),
-            0x65 => self.inst_adc(bus, AddressingMode::DirectOld),
-            0x67 => self.inst_adc(bus, AddressingMode::DirectBrackets),
-            0x69 => self.inst_adc(bus, AddressingMode::ImmediateM),
-            0x6D => self.inst_adc(bus, AddressingMode::Absolute),
-            0x6F => self.inst_adc(bus, AddressingMode::Long),
-            0x71 => self.inst_adc(bus, AddressingMode::DirectYParens),
-            0x72 => self.inst_adc(bus, AddressingMode::DirectParens),
-            0x73 => self.inst_adc(bus, AddressingMode::StackSYParens),
-            0x75 => self.inst_adc(bus, AddressingMode::DirectX),
-            0x77 => self.inst_adc(bus, AddressingMode::DirectYBrackets),
-            0x79 => self.inst_adc(bus, AddressingMode::AbsoluteY),
-            0x7D => self.inst_adc(bus, AddressingMode::AbsoluteX),
-            0x7F => self.inst_adc(bus, AddressingMode::LongX),
-            // SBC
-            0xE1 => self.inst_sbc(bus, AddressingMode::DirectXParens),
-            0xE3 => self.inst_sbc(bus, AddressingMode::StackS),
-            0xE5 => self.inst_sbc(bus, AddressingMode::DirectOld),
-            0xE7 => self.inst_sbc(bus, AddressingMode::DirectBrackets),
-            0xE9 => self.inst_sbc(bus, AddressingMode::ImmediateM),
-            0xED => self.inst_sbc(bus, AddressingMode::Absolute),
-            0xEF => self.inst_sbc(bus, AddressingMode::Long),
-            0xF1 => self.inst_sbc(bus, AddressingMode::DirectYParens),
-            0xF2 => self.inst_sbc(bus, AddressingMode::DirectParens),
-            0xF3 => self.inst_sbc(bus, AddressingMode::StackSYParens),
-            0xF5 => self.inst_sbc(bus, AddressingMode::DirectX),
-            0xF7 => self.inst_sbc(bus, AddressingMode::DirectYBrackets),
-            0xF9 => self.inst_sbc(bus, AddressingMode::AbsoluteY),
-            0xFD => self.inst_sbc(bus, AddressingMode::AbsoluteX),
-            0xFF => self.inst_sbc(bus, AddressingMode::LongX),
-            // CMP
-            0xC1 => self.inst_cmp(bus, Operand::A, AddressingMode::DirectXParens),
-            0xC3 => self.inst_cmp(bus, Operand::A, AddressingMode::StackS),
-            0xC5 => self.inst_cmp(bus, Operand::A, AddressingMode::DirectOld),
-            0xC7 => self.inst_cmp(bus, Operand::A, AddressingMode::DirectBrackets),
-            0xC9 => self.inst_cmp(bus, Operand::A, AddressingMode::ImmediateM),
-            0xCD => self.inst_cmp(bus, Operand::A, AddressingMode::Absolute),
-            0xCF => self.inst_cmp(bus, Operand::A, AddressingMode::Long),
-            0xD1 => self.inst_cmp(bus, Operand::A, AddressingMode::DirectYParens),
-            0xD2 => self.inst_cmp(bus, Operand::A, AddressingMode::DirectParens),
-            0xD3 => self.inst_cmp(bus, Operand::A, AddressingMode::StackSYParens),
-            0xD5 => self.inst_cmp(bus, Operand::A, AddressingMode::DirectX),
-            0xD7 => self.inst_cmp(bus, Operand::A, AddressingMode::DirectYBrackets),
-            0xD9 => self.inst_cmp(bus, Operand::A, AddressingMode::AbsoluteY),
-            0xDD => self.inst_cmp(bus, Operand::A, AddressingMode::AbsoluteX),
-            0xDF => self.inst_cmp(bus, Operand::A, AddressingMode::LongX),
-            // CPX
-            0xE0 => self.inst_cmp(bus, Operand::X, AddressingMode::ImmediateX),
-            0xE4 => self.inst_cmp(bus, Operand::X, AddressingMode::DirectOld),
-            0xEC => self.inst_cmp(bus, Operand::X, AddressingMode::Absolute),
-            // CPY
-            0xC0 => self.inst_cmp(bus, Operand::Y, AddressingMode::ImmediateX),
-            0xC4 => self.inst_cmp(bus, Operand::Y, AddressingMode::DirectOld),
-            0xCC => self.inst_cmp(bus, Operand::Y, AddressingMode::Absolute),
-            // DEC
-            0x3A => self.inst_dec(bus, AddressingMode::Accumulator),
-            0xC6 => self.inst_dec(bus, AddressingMode::DirectOld),
-            0xCE => self.inst_dec(bus, AddressingMode::Absolute),
-            0xD6 => self.inst_dec(bus, AddressingMode::DirectX),
-            0xDE => self.inst_dec(bus, AddressingMode::AbsoluteX),
-            // DEX
-            0xCA => self.inst_dec(bus, AddressingMode::X),
-            // DEY
-            0x88 => self.inst_dec(bus, AddressingMode::Y),
-            // INC
-            0x1A => self.inst_inc(bus, AddressingMode::Accumulator),
-            0xE6 => self.inst_inc(bus, AddressingMode::DirectOld),
-            0xEE => self.inst_inc(bus, AddressingMode::Absolute),
-            0xF6 => self.inst_inc(bus, AddressingMode::DirectX),
-            0xFE => self.inst_inc(bus, AddressingMode::AbsoluteX),
-            // INX
-            0xE8 => self.inst_inc(bus, AddressingMode::X),
-            // INY
-            0xC8 => self.inst_inc(bus, AddressingMode::Y),
-            // AND
-            0x21 => self.inst_and(bus, AddressingMode::DirectXParens),
-            0x23 => self.inst_and(bus, AddressingMode::StackS),
-            0x25 => self.inst_and(bus, AddressingMode::DirectOld),
-            0x27 => self.inst_and(bus, AddressingMode::DirectBrackets),
-            0x29 => self.inst_and(bus, AddressingMode::ImmediateM),
-            0x2D => self.inst_and(bus, AddressingMode::Absolute),
-            0x2F => self.inst_and(bus, AddressingMode::Long),
-            0x31 => self.inst_and(bus, AddressingMode::DirectYParens),
-            0x32 => self.inst_and(bus, AddressingMode::DirectParens),
-            0x33 => self.inst_and(bus, AddressingMode::StackSYParens),
-            0x35 => self.inst_and(bus, AddressingMode::DirectX),
-            0x37 => self.inst_and(bus, AddressingMode::DirectYBrackets),
-            0x39 => self.inst_and(bus, AddressingMode::AbsoluteY),
-            0x3D => self.inst_and(bus, AddressingMode::AbsoluteX),
-            0x3F => self.inst_and(bus, AddressingMode::LongX),
-            // EOR
-            0x41 => self.inst_eor(bus, AddressingMode::DirectXParens),
-            0x43 => self.inst_eor(bus, AddressingMode::StackS),
-            0x45 => self.inst_eor(bus, AddressingMode::DirectOld),
-            0x47 => self.inst_eor(bus, AddressingMode::DirectBrackets),
-            0x49 => self.inst_eor(bus, AddressingMode::ImmediateM),
-            0x4D => self.inst_eor(bus, AddressingMode::Absolute),
-            0x4F => self.inst_eor(bus, AddressingMode::Long),
-            0x51 => self.inst_eor(bus, AddressingMode::DirectYParens),
-            0x52 => self.inst_eor(bus, AddressingMode::DirectParens),
-            0x53 => self.inst_eor(bus, AddressingMode::StackSYParens),
-            0x55 => self.inst_eor(bus, AddressingMode::DirectX),
-            0x57 => self.inst_eor(bus, AddressingMode::DirectYBrackets),
-            0x59 => self.inst_eor(bus, AddressingMode::AbsoluteY),
-            0x5D => self.inst_eor(bus, AddressingMode::AbsoluteX),
-            0x5F => self.inst_eor(bus, AddressingMode::LongX),
-            // ORA
-            0x01 => self.inst_ora(bus, AddressingMode::DirectXParens),
-            0x03 => self.inst_ora(bus, AddressingMode::StackS),
-            0x05 => self.inst_ora(bus, AddressingMode::DirectOld),
-            0x07 => self.inst_ora(bus, AddressingMode::DirectBrackets),
-            0x09 => self.inst_ora(bus, AddressingMode::ImmediateM),
-            0x0D => self.inst_ora(bus, AddressingMode::Absolute),
-            0x0F => self.inst_ora(bus, AddressingMode::Long),
-            0x11 => self.inst_ora(bus, AddressingMode::DirectYParens),
-            0x12 => self.inst_ora(bus, AddressingMode::DirectParens),
-            0x13 => self.inst_ora(bus, AddressingMode::StackSYParens),
-            0x15 => self.inst_ora(bus, AddressingMode::DirectX),
-            0x17 => self.inst_ora(bus, AddressingMode::DirectYBrackets),
-            0x19 => self.inst_ora(bus, AddressingMode::AbsoluteY),
-            0x1D => self.inst_ora(bus, AddressingMode::AbsoluteX),
-            0x1F => self.inst_ora(bus, AddressingMode::LongX),
-            // BIT
-            0x24 => self.inst_bit(bus, AddressingMode::DirectOld),
-            0x2C => self.inst_bit(bus, AddressingMode::Absolute),
-            0x34 => self.inst_bit(bus, AddressingMode::DirectX),
-            0x3C => self.inst_bit(bus, AddressingMode::AbsoluteX),
-            0x89 => self.inst_bit(bus, AddressingMode::ImmediateM),
-            // TRB
-            0x14 => self.inst_trb(bus, AddressingMode::DirectOld),
-            0x1C => self.inst_trb(bus, AddressingMode::Absolute),
-            // TSB
-            0x04 => self.inst_tsb(bus, AddressingMode::DirectOld),
-            0x0C => self.inst_tsb(bus, AddressingMode::Absolute),
-            // ASL
-            0x06 => self.inst_asl(bus, AddressingMode::DirectOld),
-            0x0A => self.inst_asl(bus, AddressingMode::Accumulator),
-            0x0E => self.inst_asl(bus, AddressingMode::Absolute),
-            0x16 => self.inst_asl(bus, AddressingMode::DirectX),
-            0x1E => self.inst_asl(bus, AddressingMode::AbsoluteX),
-            // LSR
-            0x46 => self.inst_lsr(bus, AddressingMode::DirectOld),
-            0x4A => self.inst_lsr(bus, AddressingMode::Accumulator),
-            0x4E => self.inst_lsr(bus, AddressingMode::Absolute),
-            0x56 => self.inst_lsr(bus, AddressingMode::DirectX),
-            0x5E => self.inst_lsr(bus, AddressingMode::AbsoluteX),
-            // ROL
-            0x26 => self.inst_rol(bus, AddressingMode::DirectOld),
-            0x2A => self.inst_rol(bus, AddressingMode::Accumulator),
-            0x2E => self.inst_rol(bus, AddressingMode::Absolute),
-            0x36 => self.inst_rol(bus, AddressingMode::DirectX),
-            0x3E => self.inst_rol(bus, AddressingMode::AbsoluteX),
-            // ROR
-            0x66 => self.inst_ror(bus, AddressingMode::DirectOld),
-            0x6A => self.inst_ror(bus, AddressingMode::Accumulator),
-            0x6E => self.inst_ror(bus, AddressingMode::Absolute),
-            0x76 => self.inst_ror(bus, AddressingMode::DirectX),
-            0x7E => self.inst_ror(bus, AddressingMode::AbsoluteX),
-            // BCC
-            0x90 => self.inst_branch(bus, !self.regs.p.c),
-            // BCS
-            0xB0 => self.inst_branch(bus, self.regs.p.c),
-            // BEQ
-            0xF0 => self.inst_branch(bus, self.regs.p.z),
-            // BMI
-            0x30 => self.inst_branch(bus, self.regs.p.n),
-            // BNE
-            0xD0 => self.inst_branch(bus, !self.regs.p.z),
-            // BPL
-            0x10 => self.inst_branch(bus, !self.regs.p.n),
-            // BRA
-            0x80 => self.inst_branch(bus, true),
-            // BVC
-            0x50 => self.inst_branch(bus, !self.regs.p.v),
-            // BVS
-            0x70 => self.inst_branch(bus, self.regs.p.v),
-            // BRL
-            0x82 => self.inst_brl(bus),
-            // JMP
-            0x4C => self.inst_jmp(bus, AddressingMode::AbsoluteJmp),
-            0x5C => self.inst_jmp(bus, AddressingMode::Long),
-            0x6C => self.inst_jmp(bus, AddressingMode::AbsoluteParensJmp),
-            0x7C => self.inst_jmp(bus, AddressingMode::AbsoluteXParensJmp),
-            0xDC => self.inst_jmp(bus, AddressingMode::AbsoluteBracketsJmp),
-            // JSL
-            0x22 => self.inst_jsl(bus),
-            // JSR
-            0x20 => self.inst_jsr_old(bus, AddressingMode::AbsoluteJmp),
-            0xFC => self.inst_jsr_new(bus, AddressingMode::AbsoluteXParensJmp),
-            // RTL
-            0x6B => self.inst_rtl(bus),
-            // RTS
-            0x60 => self.inst_rts(bus),
-            // BRK
-            0x00 => self.int_break(bus),
-            // COP
-            0x02 => self.int_cop(bus),
-            // RTI
-            0x40 => self.inst_rti(bus),
-            // CLC
-            0x18 => self.regs.p.c = false,
-            // CLD
-            0xD8 => self.regs.p.d = false,
-            // CLI
-            0x58 => self.regs.p.i = false,
-            // CLV
-            0xB8 => self.regs.p.v = false,
-            // SEC
-            0x38 => self.regs.p.c = true,
-            // SED
-            0xF8 => self.regs.p.d = true,
-            // SEI
-            0x78 => self.regs.p.i = true,
-            // REP
-            0xC2 => self.inst_rep(bus),
-            // SEP
-            0xE2 => self.inst_sep(bus),
-            // LDA
-            0xA1 => self.inst_lda(bus, AddressingMode::DirectXParens),
-            0xA3 => self.inst_lda(bus, AddressingMode::StackS),
-            0xA5 => self.inst_lda(bus, AddressingMode::DirectOld),
-            0xA7 => self.inst_lda(bus, AddressingMode::DirectBrackets),
-            0xA9 => self.inst_lda(bus, AddressingMode::ImmediateM),
-            0xAD => self.inst_lda(bus, AddressingMode::Absolute),
-            0xAF => self.inst_lda(bus, AddressingMode::Long),
-            0xB1 => self.inst_lda(bus, AddressingMode::DirectYParens),
-            0xB2 => self.inst_lda(bus, AddressingMode::DirectParens),
-            0xB3 => self.inst_lda(bus, AddressingMode::StackSYParens),
-            0xB5 => self.inst_lda(bus, AddressingMode::DirectX),
-            0xB7 => self.inst_lda(bus, AddressingMode::DirectYBrackets),
-            0xB9 => self.inst_lda(bus, AddressingMode::AbsoluteY),
-            0xBD => self.inst_lda(bus, AddressingMode::AbsoluteX),
-            0xBF => self.inst_lda(bus, AddressingMode::LongX),
-            // LDX
-            0xA2 => self.inst_ldx(bus, AddressingMode::ImmediateX),
-            0xA6 => self.inst_ldx(bus, AddressingMode::DirectOld),
-            0xAE => self.inst_ldx(bus, AddressingMode::Absolute),
-            0xB6 => self.inst_ldx(bus, AddressingMode::DirectY),
-            0xBE => self.inst_ldx(bus, AddressingMode::AbsoluteY),
-            // LDY
-            0xA0 => self.inst_ldy(bus, AddressingMode::ImmediateX),
-            0xA4 => self.inst_ldy(bus, AddressingMode::DirectOld),
-            0xAC => self.inst_ldy(bus, AddressingMode::Absolute),
-            0xB4 => self.inst_ldy(bus, AddressingMode::DirectX),
-            0xBC => self.inst_ldy(bus, AddressingMode::AbsoluteX),
-            // STA
-            0x81 => self.inst_sta(bus, AddressingMode::DirectXParens),
-            0x83 => self.inst_sta(bus, AddressingMode::StackS),
-            0x85 => self.inst_sta(bus, AddressingMode::DirectOld),
-            0x87 => self.inst_sta(bus, AddressingMode::DirectBrackets),
-            0x8D => self.inst_sta(bus, AddressingMode::Absolute),
-            0x8F => self.inst_sta(bus, AddressingMode::Long),
-            0x91 => self.inst_sta(bus, AddressingMode::DirectYParens),
-            0x92 => self.inst_sta(bus, AddressingMode::DirectParens),
-            0x93 => self.inst_sta(bus, AddressingMode::StackSYParens),
-            0x95 => self.inst_sta(bus, AddressingMode::DirectX),
-            0x97 => self.inst_sta(bus, AddressingMode::DirectYBrackets),
-            0x99 => self.inst_sta(bus, AddressingMode::AbsoluteY),
-            0x9D => self.inst_sta(bus, AddressingMode::AbsoluteX),
-            0x9F => self.inst_sta(bus, AddressingMode::LongX),
-            // STX
-            0x86 => self.inst_stx(bus, AddressingMode::DirectOld),
-            0x8E => self.inst_stx(bus, AddressingMode::Absolute),
-            0x96 => self.inst_stx(bus, AddressingMode::DirectY),
-            // STY
-            0x84 => self.inst_sty(bus, AddressingMode::DirectOld),
-            0x8C => self.inst_sty(bus, AddressingMode::Absolute),
-            0x94 => self.inst_sty(bus, AddressingMode::DirectX),
-            // STZ
-            0x64 => self.inst_stz(bus, AddressingMode::DirectOld),
-            0x74 => self.inst_stz(bus, AddressingMode::DirectX),
-            0x9C => self.inst_stz(bus, AddressingMode::Absolute),
-            0x9E => self.inst_stz(bus, AddressingMode::AbsoluteX),
-            // MVN
-            0x54 => self.inst_mvn_mvp(bus, 1),
-            // MVP
-            0x44 => self.inst_mvn_mvp(bus, -1),
-            // NOP
-            0xEA => (),
-            // WDM
-            0x42 => self.skip_instr_byte(),
-            // PEA
-            0xF4 => self.inst_pea(bus),
-            // PEI
-            0xD4 => self.inst_pei(bus),
-            // PER
-            0x62 => self.inst_per(bus),
-            // PHA
-            0x48 => self.inst_push_reg(bus, Operand::A),
-            // PHX
-            0xDA => self.inst_push_reg(bus, Operand::X),
-            // PHY
-            0x5A => self.inst_push_reg(bus, Operand::Y),
-            // PLA
-            0x68 => self.inst_pull_reg(bus, Operand::A),
-            // PLX
-            0xFA => self.inst_pull_reg(bus, Operand::X),
-            // PLY
-            0x7A => self.inst_pull_reg(bus, Operand::Y),
-            // PHB
-            0x8B => self.inst_phb(bus),
-            // PHD
-            0x0B => self.inst_phd(bus),
-            // PHK
-            0x4B => self.inst_phk(bus),
-            // PHP
-            0x08 => self.inst_php(bus),
-            // PLB
-            0xAB => self.inst_plb(bus),
-            // PLD
-            0x2B => self.inst_pld(bus),
-            // PLP
-            0x28 => self.inst_plp(bus),
-            // STP
-            0xDB => self.stopped = true,
-            // WAI
-            0xCB => self.waiting = true,
-            // TAX
-            0xAA => self.inst_transfer(bus, Operand::A, Operand::X),
-            // TAY
-            0xA8 => self.inst_transfer(bus, Operand::A, Operand::Y),
-            // TSX
-            0xBA => self.inst_tsx(),
-            // TXA
-            0x8A => self.inst_transfer(bus, Operand::X, Operand::A),
-            // TXS
-            0x9A => self.inst_txs(),
-            // TXY
-            0x9B => self.inst_transfer(bus, Operand::X, Operand::Y),
-            // TYA
-            0x98 => self.inst_transfer(bus, Operand::Y, Operand::A),
-            // TYX
-            0xBB => self.inst_transfer(bus, Operand::Y, Operand::X),
-            // TCD
-            0x5B => self.inst_tcd(),
-            // TCS
-            0x1B => self.inst_tcs(),
-            // TDC
-            0x7B => self.inst_tdc(),
-            // TSC
-            0x3B => self.inst_tsc(),
-            // XBA
-            0xEB => self.inst_xba(),
-            // XCE
-            0xFB => self.inst_xce(),
-        }
-
-        StepResult::Stepped
+    match op {
+        // ADC
+        0x61 => inst_adc(emu, AddressingMode::DirectXParens),
+        0x63 => inst_adc(emu, AddressingMode::StackS),
+        0x65 => inst_adc(emu, AddressingMode::DirectOld),
+        0x67 => inst_adc(emu, AddressingMode::DirectBrackets),
+        0x69 => inst_adc(emu, AddressingMode::ImmediateM),
+        0x6D => inst_adc(emu, AddressingMode::Absolute),
+        0x6F => inst_adc(emu, AddressingMode::Long),
+        0x71 => inst_adc(emu, AddressingMode::DirectYParens),
+        0x72 => inst_adc(emu, AddressingMode::DirectParens),
+        0x73 => inst_adc(emu, AddressingMode::StackSYParens),
+        0x75 => inst_adc(emu, AddressingMode::DirectX),
+        0x77 => inst_adc(emu, AddressingMode::DirectYBrackets),
+        0x79 => inst_adc(emu, AddressingMode::AbsoluteY),
+        0x7D => inst_adc(emu, AddressingMode::AbsoluteX),
+        0x7F => inst_adc(emu, AddressingMode::LongX),
+        // SBC
+        0xE1 => inst_sbc(emu, AddressingMode::DirectXParens),
+        0xE3 => inst_sbc(emu, AddressingMode::StackS),
+        0xE5 => inst_sbc(emu, AddressingMode::DirectOld),
+        0xE7 => inst_sbc(emu, AddressingMode::DirectBrackets),
+        0xE9 => inst_sbc(emu, AddressingMode::ImmediateM),
+        0xED => inst_sbc(emu, AddressingMode::Absolute),
+        0xEF => inst_sbc(emu, AddressingMode::Long),
+        0xF1 => inst_sbc(emu, AddressingMode::DirectYParens),
+        0xF2 => inst_sbc(emu, AddressingMode::DirectParens),
+        0xF3 => inst_sbc(emu, AddressingMode::StackSYParens),
+        0xF5 => inst_sbc(emu, AddressingMode::DirectX),
+        0xF7 => inst_sbc(emu, AddressingMode::DirectYBrackets),
+        0xF9 => inst_sbc(emu, AddressingMode::AbsoluteY),
+        0xFD => inst_sbc(emu, AddressingMode::AbsoluteX),
+        0xFF => inst_sbc(emu, AddressingMode::LongX),
+        // CMP
+        0xC1 => inst_cmp(emu, Operand::A, AddressingMode::DirectXParens),
+        0xC3 => inst_cmp(emu, Operand::A, AddressingMode::StackS),
+        0xC5 => inst_cmp(emu, Operand::A, AddressingMode::DirectOld),
+        0xC7 => inst_cmp(emu, Operand::A, AddressingMode::DirectBrackets),
+        0xC9 => inst_cmp(emu, Operand::A, AddressingMode::ImmediateM),
+        0xCD => inst_cmp(emu, Operand::A, AddressingMode::Absolute),
+        0xCF => inst_cmp(emu, Operand::A, AddressingMode::Long),
+        0xD1 => inst_cmp(emu, Operand::A, AddressingMode::DirectYParens),
+        0xD2 => inst_cmp(emu, Operand::A, AddressingMode::DirectParens),
+        0xD3 => inst_cmp(emu, Operand::A, AddressingMode::StackSYParens),
+        0xD5 => inst_cmp(emu, Operand::A, AddressingMode::DirectX),
+        0xD7 => inst_cmp(emu, Operand::A, AddressingMode::DirectYBrackets),
+        0xD9 => inst_cmp(emu, Operand::A, AddressingMode::AbsoluteY),
+        0xDD => inst_cmp(emu, Operand::A, AddressingMode::AbsoluteX),
+        0xDF => inst_cmp(emu, Operand::A, AddressingMode::LongX),
+        // CPX
+        0xE0 => inst_cmp(emu, Operand::X, AddressingMode::ImmediateX),
+        0xE4 => inst_cmp(emu, Operand::X, AddressingMode::DirectOld),
+        0xEC => inst_cmp(emu, Operand::X, AddressingMode::Absolute),
+        // CPY
+        0xC0 => inst_cmp(emu, Operand::Y, AddressingMode::ImmediateX),
+        0xC4 => inst_cmp(emu, Operand::Y, AddressingMode::DirectOld),
+        0xCC => inst_cmp(emu, Operand::Y, AddressingMode::Absolute),
+        // DEC
+        0x3A => inst_dec(emu, AddressingMode::Accumulator),
+        0xC6 => inst_dec(emu, AddressingMode::DirectOld),
+        0xCE => inst_dec(emu, AddressingMode::Absolute),
+        0xD6 => inst_dec(emu, AddressingMode::DirectX),
+        0xDE => inst_dec(emu, AddressingMode::AbsoluteX),
+        // DEX
+        0xCA => inst_dec(emu, AddressingMode::X),
+        // DEY
+        0x88 => inst_dec(emu, AddressingMode::Y),
+        // INC
+        0x1A => inst_inc(emu, AddressingMode::Accumulator),
+        0xE6 => inst_inc(emu, AddressingMode::DirectOld),
+        0xEE => inst_inc(emu, AddressingMode::Absolute),
+        0xF6 => inst_inc(emu, AddressingMode::DirectX),
+        0xFE => inst_inc(emu, AddressingMode::AbsoluteX),
+        // INX
+        0xE8 => inst_inc(emu, AddressingMode::X),
+        // INY
+        0xC8 => inst_inc(emu, AddressingMode::Y),
+        // AND
+        0x21 => inst_and(emu, AddressingMode::DirectXParens),
+        0x23 => inst_and(emu, AddressingMode::StackS),
+        0x25 => inst_and(emu, AddressingMode::DirectOld),
+        0x27 => inst_and(emu, AddressingMode::DirectBrackets),
+        0x29 => inst_and(emu, AddressingMode::ImmediateM),
+        0x2D => inst_and(emu, AddressingMode::Absolute),
+        0x2F => inst_and(emu, AddressingMode::Long),
+        0x31 => inst_and(emu, AddressingMode::DirectYParens),
+        0x32 => inst_and(emu, AddressingMode::DirectParens),
+        0x33 => inst_and(emu, AddressingMode::StackSYParens),
+        0x35 => inst_and(emu, AddressingMode::DirectX),
+        0x37 => inst_and(emu, AddressingMode::DirectYBrackets),
+        0x39 => inst_and(emu, AddressingMode::AbsoluteY),
+        0x3D => inst_and(emu, AddressingMode::AbsoluteX),
+        0x3F => inst_and(emu, AddressingMode::LongX),
+        // EOR
+        0x41 => inst_eor(emu, AddressingMode::DirectXParens),
+        0x43 => inst_eor(emu, AddressingMode::StackS),
+        0x45 => inst_eor(emu, AddressingMode::DirectOld),
+        0x47 => inst_eor(emu, AddressingMode::DirectBrackets),
+        0x49 => inst_eor(emu, AddressingMode::ImmediateM),
+        0x4D => inst_eor(emu, AddressingMode::Absolute),
+        0x4F => inst_eor(emu, AddressingMode::Long),
+        0x51 => inst_eor(emu, AddressingMode::DirectYParens),
+        0x52 => inst_eor(emu, AddressingMode::DirectParens),
+        0x53 => inst_eor(emu, AddressingMode::StackSYParens),
+        0x55 => inst_eor(emu, AddressingMode::DirectX),
+        0x57 => inst_eor(emu, AddressingMode::DirectYBrackets),
+        0x59 => inst_eor(emu, AddressingMode::AbsoluteY),
+        0x5D => inst_eor(emu, AddressingMode::AbsoluteX),
+        0x5F => inst_eor(emu, AddressingMode::LongX),
+        // ORA
+        0x01 => inst_ora(emu, AddressingMode::DirectXParens),
+        0x03 => inst_ora(emu, AddressingMode::StackS),
+        0x05 => inst_ora(emu, AddressingMode::DirectOld),
+        0x07 => inst_ora(emu, AddressingMode::DirectBrackets),
+        0x09 => inst_ora(emu, AddressingMode::ImmediateM),
+        0x0D => inst_ora(emu, AddressingMode::Absolute),
+        0x0F => inst_ora(emu, AddressingMode::Long),
+        0x11 => inst_ora(emu, AddressingMode::DirectYParens),
+        0x12 => inst_ora(emu, AddressingMode::DirectParens),
+        0x13 => inst_ora(emu, AddressingMode::StackSYParens),
+        0x15 => inst_ora(emu, AddressingMode::DirectX),
+        0x17 => inst_ora(emu, AddressingMode::DirectYBrackets),
+        0x19 => inst_ora(emu, AddressingMode::AbsoluteY),
+        0x1D => inst_ora(emu, AddressingMode::AbsoluteX),
+        0x1F => inst_ora(emu, AddressingMode::LongX),
+        // BIT
+        0x24 => inst_bit(emu, AddressingMode::DirectOld),
+        0x2C => inst_bit(emu, AddressingMode::Absolute),
+        0x34 => inst_bit(emu, AddressingMode::DirectX),
+        0x3C => inst_bit(emu, AddressingMode::AbsoluteX),
+        0x89 => inst_bit(emu, AddressingMode::ImmediateM),
+        // TRB
+        0x14 => inst_trb(emu, AddressingMode::DirectOld),
+        0x1C => inst_trb(emu, AddressingMode::Absolute),
+        // TSB
+        0x04 => inst_tsb(emu, AddressingMode::DirectOld),
+        0x0C => inst_tsb(emu, AddressingMode::Absolute),
+        // ASL
+        0x06 => inst_asl(emu, AddressingMode::DirectOld),
+        0x0A => inst_asl(emu, AddressingMode::Accumulator),
+        0x0E => inst_asl(emu, AddressingMode::Absolute),
+        0x16 => inst_asl(emu, AddressingMode::DirectX),
+        0x1E => inst_asl(emu, AddressingMode::AbsoluteX),
+        // LSR
+        0x46 => inst_lsr(emu, AddressingMode::DirectOld),
+        0x4A => inst_lsr(emu, AddressingMode::Accumulator),
+        0x4E => inst_lsr(emu, AddressingMode::Absolute),
+        0x56 => inst_lsr(emu, AddressingMode::DirectX),
+        0x5E => inst_lsr(emu, AddressingMode::AbsoluteX),
+        // ROL
+        0x26 => inst_rol(emu, AddressingMode::DirectOld),
+        0x2A => inst_rol(emu, AddressingMode::Accumulator),
+        0x2E => inst_rol(emu, AddressingMode::Absolute),
+        0x36 => inst_rol(emu, AddressingMode::DirectX),
+        0x3E => inst_rol(emu, AddressingMode::AbsoluteX),
+        // ROR
+        0x66 => inst_ror(emu, AddressingMode::DirectOld),
+        0x6A => inst_ror(emu, AddressingMode::Accumulator),
+        0x6E => inst_ror(emu, AddressingMode::Absolute),
+        0x76 => inst_ror(emu, AddressingMode::DirectX),
+        0x7E => inst_ror(emu, AddressingMode::AbsoluteX),
+        // BCC
+        0x90 => inst_branch(emu, !emu.cpu.regs.p.c),
+        // BCS
+        0xB0 => inst_branch(emu, emu.cpu.regs.p.c),
+        // BEQ
+        0xF0 => inst_branch(emu, emu.cpu.regs.p.z),
+        // BMI
+        0x30 => inst_branch(emu, emu.cpu.regs.p.n),
+        // BNE
+        0xD0 => inst_branch(emu, !emu.cpu.regs.p.z),
+        // BPL
+        0x10 => inst_branch(emu, !emu.cpu.regs.p.n),
+        // BRA
+        0x80 => inst_branch(emu, true),
+        // BVC
+        0x50 => inst_branch(emu, !emu.cpu.regs.p.v),
+        // BVS
+        0x70 => inst_branch(emu, emu.cpu.regs.p.v),
+        // BRL
+        0x82 => inst_brl(emu),
+        // JMP
+        0x4C => inst_jmp(emu, AddressingMode::AbsoluteJmp),
+        0x5C => inst_jmp(emu, AddressingMode::Long),
+        0x6C => inst_jmp(emu, AddressingMode::AbsoluteParensJmp),
+        0x7C => inst_jmp(emu, AddressingMode::AbsoluteXParensJmp),
+        0xDC => inst_jmp(emu, AddressingMode::AbsoluteBracketsJmp),
+        // JSL
+        0x22 => inst_jsl(emu),
+        // JSR
+        0x20 => inst_jsr_old(emu, AddressingMode::AbsoluteJmp),
+        0xFC => inst_jsr_new(emu, AddressingMode::AbsoluteXParensJmp),
+        // RTL
+        0x6B => inst_rtl(emu),
+        // RTS
+        0x60 => inst_rts(emu),
+        // BRK
+        0x00 => int_break(emu),
+        // COP
+        0x02 => int_cop(emu),
+        // RTI
+        0x40 => inst_rti(emu),
+        // CLC
+        0x18 => emu.cpu.regs.p.c = false,
+        // CLD
+        0xD8 => emu.cpu.regs.p.d = false,
+        // CLI
+        0x58 => emu.cpu.regs.p.i = false,
+        // CLV
+        0xB8 => emu.cpu.regs.p.v = false,
+        // SEC
+        0x38 => emu.cpu.regs.p.c = true,
+        // SED
+        0xF8 => emu.cpu.regs.p.d = true,
+        // SEI
+        0x78 => emu.cpu.regs.p.i = true,
+        // REP
+        0xC2 => inst_rep(emu),
+        // SEP
+        0xE2 => inst_sep(emu),
+        // LDA
+        0xA1 => inst_lda(emu, AddressingMode::DirectXParens),
+        0xA3 => inst_lda(emu, AddressingMode::StackS),
+        0xA5 => inst_lda(emu, AddressingMode::DirectOld),
+        0xA7 => inst_lda(emu, AddressingMode::DirectBrackets),
+        0xA9 => inst_lda(emu, AddressingMode::ImmediateM),
+        0xAD => inst_lda(emu, AddressingMode::Absolute),
+        0xAF => inst_lda(emu, AddressingMode::Long),
+        0xB1 => inst_lda(emu, AddressingMode::DirectYParens),
+        0xB2 => inst_lda(emu, AddressingMode::DirectParens),
+        0xB3 => inst_lda(emu, AddressingMode::StackSYParens),
+        0xB5 => inst_lda(emu, AddressingMode::DirectX),
+        0xB7 => inst_lda(emu, AddressingMode::DirectYBrackets),
+        0xB9 => inst_lda(emu, AddressingMode::AbsoluteY),
+        0xBD => inst_lda(emu, AddressingMode::AbsoluteX),
+        0xBF => inst_lda(emu, AddressingMode::LongX),
+        // LDX
+        0xA2 => inst_ldx(emu, AddressingMode::ImmediateX),
+        0xA6 => inst_ldx(emu, AddressingMode::DirectOld),
+        0xAE => inst_ldx(emu, AddressingMode::Absolute),
+        0xB6 => inst_ldx(emu, AddressingMode::DirectY),
+        0xBE => inst_ldx(emu, AddressingMode::AbsoluteY),
+        // LDY
+        0xA0 => inst_ldy(emu, AddressingMode::ImmediateX),
+        0xA4 => inst_ldy(emu, AddressingMode::DirectOld),
+        0xAC => inst_ldy(emu, AddressingMode::Absolute),
+        0xB4 => inst_ldy(emu, AddressingMode::DirectX),
+        0xBC => inst_ldy(emu, AddressingMode::AbsoluteX),
+        // STA
+        0x81 => inst_sta(emu, AddressingMode::DirectXParens),
+        0x83 => inst_sta(emu, AddressingMode::StackS),
+        0x85 => inst_sta(emu, AddressingMode::DirectOld),
+        0x87 => inst_sta(emu, AddressingMode::DirectBrackets),
+        0x8D => inst_sta(emu, AddressingMode::Absolute),
+        0x8F => inst_sta(emu, AddressingMode::Long),
+        0x91 => inst_sta(emu, AddressingMode::DirectYParens),
+        0x92 => inst_sta(emu, AddressingMode::DirectParens),
+        0x93 => inst_sta(emu, AddressingMode::StackSYParens),
+        0x95 => inst_sta(emu, AddressingMode::DirectX),
+        0x97 => inst_sta(emu, AddressingMode::DirectYBrackets),
+        0x99 => inst_sta(emu, AddressingMode::AbsoluteY),
+        0x9D => inst_sta(emu, AddressingMode::AbsoluteX),
+        0x9F => inst_sta(emu, AddressingMode::LongX),
+        // STX
+        0x86 => inst_stx(emu, AddressingMode::DirectOld),
+        0x8E => inst_stx(emu, AddressingMode::Absolute),
+        0x96 => inst_stx(emu, AddressingMode::DirectY),
+        // STY
+        0x84 => inst_sty(emu, AddressingMode::DirectOld),
+        0x8C => inst_sty(emu, AddressingMode::Absolute),
+        0x94 => inst_sty(emu, AddressingMode::DirectX),
+        // STZ
+        0x64 => inst_stz(emu, AddressingMode::DirectOld),
+        0x74 => inst_stz(emu, AddressingMode::DirectX),
+        0x9C => inst_stz(emu, AddressingMode::Absolute),
+        0x9E => inst_stz(emu, AddressingMode::AbsoluteX),
+        // MVN
+        0x54 => inst_mvn_mvp(emu, 1),
+        // MVP
+        0x44 => inst_mvn_mvp(emu, -1),
+        // NOP
+        0xEA => (),
+        // WDM
+        0x42 => skip_instr_byte(emu),
+        // PEA
+        0xF4 => inst_pea(emu),
+        // PEI
+        0xD4 => inst_pei(emu),
+        // PER
+        0x62 => inst_per(emu),
+        // PHA
+        0x48 => inst_push_reg(emu, Operand::A),
+        // PHX
+        0xDA => inst_push_reg(emu, Operand::X),
+        // PHY
+        0x5A => inst_push_reg(emu, Operand::Y),
+        // PLA
+        0x68 => inst_pull_reg(emu, Operand::A),
+        // PLX
+        0xFA => inst_pull_reg(emu, Operand::X),
+        // PLY
+        0x7A => inst_pull_reg(emu, Operand::Y),
+        // PHB
+        0x8B => inst_phb(emu),
+        // PHD
+        0x0B => inst_phd(emu),
+        // PHK
+        0x4B => inst_phk(emu),
+        // PHP
+        0x08 => inst_php(emu),
+        // PLB
+        0xAB => inst_plb(emu),
+        // PLD
+        0x2B => inst_pld(emu),
+        // PLP
+        0x28 => inst_plp(emu),
+        // STP
+        0xDB => emu.cpu.stopped = true,
+        // WAI
+        0xCB => emu.cpu.waiting = true,
+        // TAX
+        0xAA => inst_transfer(emu, Operand::A, Operand::X),
+        // TAY
+        0xA8 => inst_transfer(emu, Operand::A, Operand::Y),
+        // TSX
+        0xBA => inst_tsx(emu),
+        // TXA
+        0x8A => inst_transfer(emu, Operand::X, Operand::A),
+        // TXS
+        0x9A => inst_txs(emu),
+        // TXY
+        0x9B => inst_transfer(emu, Operand::X, Operand::Y),
+        // TYA
+        0x98 => inst_transfer(emu, Operand::Y, Operand::A),
+        // TYX
+        0xBB => inst_transfer(emu, Operand::Y, Operand::X),
+        // TCD
+        0x5B => inst_tcd(emu),
+        // TCS
+        0x1B => inst_tcs(emu),
+        // TDC
+        0x7B => inst_tdc(emu),
+        // TSC
+        0x3B => inst_tsc(emu),
+        // XBA
+        0xEB => inst_xba(emu),
+        // XCE
+        0xFB => inst_xce(emu),
     }
+
+    StepResult::Stepped
 }

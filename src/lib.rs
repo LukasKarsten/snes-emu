@@ -37,33 +37,135 @@ pub enum BusDevice {
     Joypad,
 }
 
-pub struct Bus {
+pub struct Snes {
+    pub cpu: Cpu,
+    pub ppu: Ppu,
+    pub apu: Apu,
     pub mapping_mode: MappingMode,
     wram: WRam,
     sram: Box<[u8; 0x080000]>,
     rom: Box<[u8]>,
-    pub cpu: CpuIo,
-    pub ppu: PpuIo,
-    pub apu: ApuIo,
+    pub cpu_io: CpuIo,
+    pub ppu_io: PpuIo,
+    pub apu_io: ApuIo,
     joypad: JoypadIo,
     pub dma: Dma,
     mdr: u8,
 }
 
-impl Bus {
+impl Snes {
     pub fn new(rom: Box<[u8]>, mapping_mode: MappingMode) -> Self {
-        Self {
+        let mut snes = Self {
+            cpu: Cpu::default(),
+            ppu: Ppu::default(),
+            apu: Apu::default(),
             mapping_mode,
             wram: WRam::default(),
             sram: vec![0; 0x080000].try_into().unwrap(),
             rom,
-            cpu: CpuIo::default(),
-            ppu: PpuIo::default(),
-            apu: ApuIo::default(),
+            cpu_io: CpuIo::default(),
+            ppu_io: PpuIo::default(),
+            apu_io: ApuIo::default(),
             joypad: JoypadIo::default(),
             dma: Dma::default(),
             mdr: 0,
+        };
+        snes.cpu_io.raise_interrupt(cpu::Interrupt::Reset);
+        snes
+    }
+
+    pub fn set_input1(&mut self, input: Option<Box<dyn InputDevice>>) {
+        self.joypad.input1 = input;
+    }
+
+    pub fn set_input2(&mut self, input: Option<Box<dyn InputDevice>>) {
+        self.joypad.input2 = input;
+    }
+
+    pub fn add_cycles(&mut self, n: u64) -> bool {
+        self.apu.step(&mut self.apu_io);
+        ppu::Ppu::step(self, n)
+    }
+
+    pub fn output_image(&self) -> &OutputImage {
+        self.ppu.output()
+    }
+
+    pub fn run(&mut self) -> bool {
+        let mut ignore_breakpoints = true;
+
+        if self.cpu_io.nmitimen_joypad_enable {
+            fn read_input(
+                input: &mut Option<Box<dyn InputDevice>>,
+                joy1l: &mut u8,
+                joy1h: &mut u8,
+                joy2l: &mut u8,
+                joy2h: &mut u8,
+            ) {
+                match input.as_deref_mut() {
+                    Some(input) => {
+                        input.strobe();
+                        for _ in 0..8 {
+                            *joy1h = (*joy1h << 1) | input.read_data1() as u8;
+                            *joy2h = (*joy2h << 1) | input.read_data2() as u8;
+                        }
+                        for _ in 0..8 {
+                            *joy1l = (*joy1l << 1) | input.read_data1() as u8;
+                            *joy2l = (*joy2l << 1) | input.read_data2() as u8;
+                        }
+                    }
+                    None => {
+                        *joy1h = 0;
+                        *joy2h = 0;
+                    }
+                }
+            }
+
+            read_input(
+                &mut self.joypad.input1,
+                &mut self.cpu_io.joy1l,
+                &mut self.cpu_io.joy1h,
+                &mut self.cpu_io.joy2l,
+                &mut self.cpu_io.joy2h,
+            );
+            read_input(
+                &mut self.joypad.input2,
+                &mut self.cpu_io.joy3l,
+                &mut self.cpu_io.joy3h,
+                &mut self.cpu_io.joy4l,
+                &mut self.cpu_io.joy4h,
+            );
+            self.cpu_io.hvbjoy_auto_joypad_read_busy_flag = false;
         }
+
+        loop {
+            let result = cpu::step(self, ignore_breakpoints);
+            ignore_breakpoints = false;
+            // TODO: calculate the actual number of cycles based on the addresses accessed and the
+            // instruction executed.
+            // TODO: Also, consider breaking up every instruction into it's separate cycles to
+            // allow actual cycle accurate emulation.
+            let frame_finished = self.add_cycles(6);
+
+            match result {
+                StepResult::Stepped => (),
+                StepResult::BreakpointHit => return true,
+            }
+
+            if frame_finished {
+                return false;
+            }
+        }
+    }
+
+    pub fn step(&mut self) -> StepResult {
+        let result = cpu::step(self, true);
+
+        if result != StepResult::BreakpointHit {
+            self.add_cycles(1 * 6);
+        }
+
+        result
     }
 
     fn resolve_cartridge_addr(&self, addr: u32) -> Option<(BusDevice, u32)> {
@@ -137,11 +239,11 @@ impl Bus {
 
         match device {
             BusDevice::WRam => Some(self.wram.data[device_addr as usize]),
-            BusDevice::Ppu => self.ppu.read_pure(device_addr),
-            BusDevice::Apu => self.apu.cpu_read_pure(device_addr as u16),
+            BusDevice::Ppu => self.ppu_io.read_pure(device_addr),
+            BusDevice::Apu => self.apu_io.cpu_read_pure(device_addr as u16),
             BusDevice::WRamAccess => self.wram.read_pure(device_addr),
             BusDevice::Joypad => self.joypad.read_pure(device_addr),
-            BusDevice::CpuIo => self.cpu.read_pure(device_addr),
+            BusDevice::CpuIo => self.cpu_io.read_pure(device_addr),
             BusDevice::Dma => self.dma.read_pure(device_addr),
             BusDevice::Rom => {
                 // TODO: Implement correct wrapping behaviour
@@ -160,7 +262,7 @@ impl Bus {
 
         let value = match device {
             BusDevice::WRam => self.wram.data[device_addr as usize],
-            BusDevice::Ppu => self.ppu.read(addr).unwrap_or_else(|| {
+            BusDevice::Ppu => self.ppu_io.read(addr).unwrap_or_else(|| {
                 // 0x2137 is SLHV which when read has no value but side effects
                 if addr != 0x2137 {
                     panic!("Open Bus Read on address {addr:06X} (PPU)");
@@ -168,7 +270,7 @@ impl Bus {
                 self.mdr
             }),
             BusDevice::Apu => self
-                .apu
+                .apu_io
                 .cpu_read(device_addr as u16)
                 .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (APU)")),
             BusDevice::WRamAccess => self
@@ -180,7 +282,7 @@ impl Bus {
                 .read(device_addr)
                 .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (JOYPAD)")),
             BusDevice::CpuIo => self
-                .cpu
+                .cpu_io
                 .read(device_addr)
                 .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (CPUIO)")),
             BusDevice::Dma => self
@@ -213,11 +315,11 @@ impl Bus {
 
         match device {
             BusDevice::WRam => self.wram.data[device_addr as usize] = value,
-            BusDevice::Ppu => self.ppu.write(device_addr, value),
-            BusDevice::Apu => self.apu.cpu_write(device_addr as u16, value),
+            BusDevice::Ppu => self.ppu_io.write(device_addr, value),
+            BusDevice::Apu => self.apu_io.cpu_write(device_addr as u16, value),
             BusDevice::WRamAccess => self.wram.write(device_addr, value),
             BusDevice::Joypad => self.joypad.write(device_addr, value),
-            BusDevice::CpuIo => self.cpu.write(device_addr, value),
+            BusDevice::CpuIo => self.cpu_io.write(device_addr, value),
             BusDevice::Dma => self.dma.write(device_addr, value),
             BusDevice::Rom => (),
             BusDevice::SRam => self.sram[device_addr as usize] = value,
@@ -226,119 +328,5 @@ impl Bus {
 
     pub fn mdr(&self) -> u8 {
         self.mdr
-    }
-}
-
-pub struct Snes {
-    pub bus: Bus,
-    pub cpu: Cpu,
-    pub ppu: Ppu,
-    pub apu: Apu,
-}
-
-impl Snes {
-    pub fn new(rom: Box<[u8]>, mapping_mode: MappingMode) -> Self {
-        let mut bus = Bus::new(rom, mapping_mode);
-        bus.cpu.raise_interrupt(cpu::Interrupt::Reset);
-        Self {
-            bus,
-            cpu: Cpu::default(),
-            ppu: Ppu::default(),
-            apu: Apu::default(),
-        }
-    }
-
-    pub fn set_input1(&mut self, input: Option<Box<dyn InputDevice>>) {
-        self.bus.joypad.input1 = input;
-    }
-
-    pub fn set_input2(&mut self, input: Option<Box<dyn InputDevice>>) {
-        self.bus.joypad.input2 = input;
-    }
-
-    pub fn add_cycles(&mut self, n: u64) -> bool {
-        self.apu.step(&mut self.bus.apu);
-        self.ppu.step(&mut self.bus, n)
-    }
-
-    pub fn output_image(&self) -> &OutputImage {
-        self.ppu.output()
-    }
-
-    pub fn run(&mut self) -> bool {
-        let mut ignore_breakpoints = true;
-
-        if self.bus.cpu.nmitimen_joypad_enable {
-            fn read_input(
-                input: &mut Option<Box<dyn InputDevice>>,
-                joy1l: &mut u8,
-                joy1h: &mut u8,
-                joy2l: &mut u8,
-                joy2h: &mut u8,
-            ) {
-                match input.as_deref_mut() {
-                    Some(input) => {
-                        input.strobe();
-                        for _ in 0..8 {
-                            *joy1h = (*joy1h << 1) | input.read_data1() as u8;
-                            *joy2h = (*joy2h << 1) | input.read_data2() as u8;
-                        }
-                        for _ in 0..8 {
-                            *joy1l = (*joy1l << 1) | input.read_data1() as u8;
-                            *joy2l = (*joy2l << 1) | input.read_data2() as u8;
-                        }
-                    }
-                    None => {
-                        *joy1h = 0;
-                        *joy2h = 0;
-                    }
-                }
-            }
-
-            read_input(
-                &mut self.bus.joypad.input1,
-                &mut self.bus.cpu.joy1l,
-                &mut self.bus.cpu.joy1h,
-                &mut self.bus.cpu.joy2l,
-                &mut self.bus.cpu.joy2h,
-            );
-            read_input(
-                &mut self.bus.joypad.input2,
-                &mut self.bus.cpu.joy3l,
-                &mut self.bus.cpu.joy3h,
-                &mut self.bus.cpu.joy4l,
-                &mut self.bus.cpu.joy4h,
-            );
-            self.bus.cpu.hvbjoy_auto_joypad_read_busy_flag = false;
-        }
-
-        loop {
-            let result = self.cpu.step(&mut self.bus, ignore_breakpoints);
-            ignore_breakpoints = false;
-            // TODO: calculate the actual number of cycles based on the addresses accessed and the
-            // instruction executed.
-            // TODO: Also, consider breaking up every instruction into it's separate cycles to
-            // allow actual cycle accurate emulation.
-            let frame_finished = self.add_cycles(6);
-
-            match result {
-                StepResult::Stepped => (),
-                StepResult::BreakpointHit => return true,
-            }
-
-            if frame_finished {
-                return false;
-            }
-        }
-    }
-
-    pub fn step(&mut self) -> StepResult {
-        let result = self.cpu.step(&mut self.bus, true);
-
-        if result != StepResult::BreakpointHit {
-            self.add_cycles(1 * 6);
-        }
-
-        result
     }
 }
