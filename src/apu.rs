@@ -12,86 +12,13 @@ static BOOT_ROM: [u8; 64] = [
     /* FFF8 */ 0x5D, 0xD0, 0xDB, 0x1F, 0x00, 0x00, 0xC0, 0xFF,
 ];
 
-pub struct ApuIo {
+pub struct Apu {
     pub cpuio_in: [u8; 4],
     pub cpuio_out: [u8; 4],
-
     pub rom_enable: bool,
-
     pub ram: Box<[u8; 0x10000]>,
-
     reset: bool,
-}
 
-impl Default for ApuIo {
-    fn default() -> Self {
-        let mut state = Self {
-            cpuio_in: [0; 4],
-            cpuio_out: [0; 4],
-
-            rom_enable: true,
-
-            ram: Box::new([0; 0x10000]),
-
-            reset: false,
-        };
-
-        state.ram[0x00F4] = 0xAA;
-        state.ram[0x00F5] = 0xBB;
-
-        state
-    }
-}
-
-impl ApuIo {
-    pub fn cpu_read_pure(&self, addr: u16) -> Option<u8> {
-        Some(self.cpuio_out[usize::from(addr - 0x2140)])
-    }
-
-    pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
-        self.cpu_read_pure(addr)
-    }
-
-    pub fn cpu_write(&mut self, addr: u16, value: u8) {
-        self.cpuio_in[usize::from(addr - 0x2140)] = value;
-    }
-
-    pub fn reset(&mut self) {
-        self.reset = true;
-    }
-
-    pub fn read_pure(&self, addr: u16) -> u8 {
-        match addr {
-            0x00F4 => self.cpuio_in[0],
-            0x00F5 => self.cpuio_in[1],
-            0x00F6 => self.cpuio_in[2],
-            0x00F7 => self.cpuio_in[3],
-            0xFFC0..=0xFFFF if self.rom_enable => BOOT_ROM[usize::from(addr - 0xFFC0)],
-            _ => self.ram[usize::from(addr)],
-        }
-    }
-
-    fn read(&mut self, addr: u16) -> u8 {
-        self.read_pure(addr)
-    }
-
-    pub fn write(&mut self, addr: u16, value: u8) {
-        self.ram[usize::from(addr)] = value;
-        match addr {
-            0x00F0 => todo!(),
-            0x00F1 => {
-                self.rom_enable = value & 0x80 != 0;
-            }
-            0x00F4 => self.cpuio_out[0] = value,
-            0x00F5 => self.cpuio_out[1] = value,
-            0x00F6 => self.cpuio_out[2] = value,
-            0x00F7 => self.cpuio_out[3] = value,
-            _ => (),
-        }
-    }
-}
-
-pub struct Apu {
     pub a: u8,
     pub x: u8,
     pub y: u8,
@@ -104,7 +31,13 @@ pub struct Apu {
 
 impl Default for Apu {
     fn default() -> Self {
-        let instance = Self {
+        Self {
+            cpuio_in: [0; 4],
+            cpuio_out: [0; 4],
+            rom_enable: true,
+            ram: Box::new([0; 0x10000]),
+            reset: false,
+
             a: 0,
             x: 0,
             y: 0,
@@ -113,9 +46,7 @@ impl Default for Apu {
             pc: 0,
             cycles: 0,
             stopped: false,
-        };
-
-        instance
+        }
     }
 }
 
@@ -252,22 +183,68 @@ enum Operand {
 }
 
 trait Target {
-    fn resolve(self, apu: &mut Apu, io: &mut ApuIo) -> Operand;
+    fn resolve(self, apu: &mut Apu) -> Operand;
 }
 
 impl Target for Operand {
-    fn resolve(self, _: &mut Apu, _: &mut ApuIo) -> Operand {
+    fn resolve(self, _: &mut Apu) -> Operand {
         self
     }
 }
 
 impl Target for AddressingMode {
-    fn resolve(self, apu: &mut Apu, io: &mut ApuIo) -> Operand {
-        Operand::Memory(apu.read_pointer(io, self))
+    fn resolve(self, apu: &mut Apu) -> Operand {
+        Operand::Memory(apu.read_pointer(self))
     }
 }
 
 impl Apu {
+    pub fn cpu_read_pure(&self, addr: u16) -> Option<u8> {
+        Some(self.cpuio_out[usize::from(addr - 0x2140)])
+    }
+
+    pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
+        self.cpu_read_pure(addr)
+    }
+
+    pub fn cpu_write(&mut self, addr: u16, value: u8) {
+        self.cpuio_in[usize::from(addr - 0x2140)] = value;
+    }
+
+    pub fn reset(&mut self) {
+        self.reset = true;
+    }
+
+    pub fn read_pure(&self, addr: u16) -> u8 {
+        match addr {
+            0x00F4 => self.cpuio_in[0],
+            0x00F5 => self.cpuio_in[1],
+            0x00F6 => self.cpuio_in[2],
+            0x00F7 => self.cpuio_in[3],
+            0xFFC0..=0xFFFF if self.rom_enable => BOOT_ROM[usize::from(addr - 0xFFC0)],
+            _ => self.ram[usize::from(addr)],
+        }
+    }
+
+    fn read(&mut self, addr: u16) -> u8 {
+        self.read_pure(addr)
+    }
+
+    pub fn write(&mut self, addr: u16, value: u8) {
+        self.ram[usize::from(addr)] = value;
+        match addr {
+            0x00F0 => todo!(),
+            0x00F1 => {
+                self.rom_enable = value & 0x80 != 0;
+            }
+            0x00F4 => self.cpuio_out[0] = value,
+            0x00F5 => self.cpuio_out[1] = value,
+            0x00F6 => self.cpuio_out[2] = value,
+            0x00F7 => self.cpuio_out[3] = value,
+            _ => (),
+        }
+    }
+
     pub fn get_ya(&self) -> u16 {
         (self.y as u16) << 8 | self.a as u16
     }
@@ -277,54 +254,54 @@ impl Apu {
         self.a = value as u8;
     }
 
-    fn next_instr_byte(&mut self, io: &mut ApuIo) -> u8 {
+    fn next_instr_byte(&mut self) -> u8 {
         let pc = self.pc;
         self.pc = self.pc.wrapping_add(1);
-        io.read(pc)
+        self.read(pc)
     }
 
-    fn read_pointer(&mut self, io: &mut ApuIo, addr_mode: AddressingMode) -> Pointer {
+    fn read_pointer(&mut self, addr_mode: AddressingMode) -> Pointer {
         match addr_mode {
             AddressingMode::Absolute8 => {
-                let ll = self.next_instr_byte(io);
+                let ll = self.next_instr_byte();
                 Pointer::new8(self.psw.p as u8, ll)
             }
             // PERF: recursive call of `read_pointer` might not get inlined here
             AddressingMode::Absolute8X => self
-                .read_pointer(io, AddressingMode::Absolute8)
+                .read_pointer(AddressingMode::Absolute8)
                 .with_offset(self.x),
             AddressingMode::Absolute8Y => self
-                .read_pointer(io, AddressingMode::Absolute8)
+                .read_pointer(AddressingMode::Absolute8)
                 .with_offset(self.y),
             AddressingMode::DirectX => Pointer::new8(self.psw.p as u8, self.x),
             AddressingMode::DirectXInc => {
-                let pointer = self.read_pointer(io, AddressingMode::DirectX);
+                let pointer = self.read_pointer(AddressingMode::DirectX);
                 self.x += 1;
                 pointer
             }
             AddressingMode::DirectY => Pointer::new8(self.psw.p as u8, self.y),
             AddressingMode::Absolute16 => {
-                let ll = self.next_instr_byte(io) as u16;
-                let hh = self.next_instr_byte(io) as u16;
+                let ll = self.next_instr_byte() as u16;
+                let hh = self.next_instr_byte() as u16;
                 Pointer::new16(hh << 8 | ll)
             }
             AddressingMode::Absolute16X => self
-                .read_pointer(io, AddressingMode::Absolute16)
+                .read_pointer(AddressingMode::Absolute16)
                 .with_offset(self.x),
             AddressingMode::Absolute16Y => self
-                .read_pointer(io, AddressingMode::Absolute16)
+                .read_pointer(AddressingMode::Absolute16)
                 .with_offset(self.y),
             AddressingMode::IndirectY => {
-                let pointer = self.read_pointer(io, AddressingMode::Absolute8);
-                let ll = io.read(pointer.at(0)) as u16;
-                let hh = io.read(pointer.at(1)) as u16;
+                let pointer = self.read_pointer(AddressingMode::Absolute8);
+                let ll = self.read(pointer.at(0)) as u16;
+                let hh = self.read(pointer.at(1)) as u16;
                 // TODO: Should this add wrap at the byte boundary?
                 Pointer::new16((hh << 8 | ll).wrapping_add(self.y as u16))
             }
             AddressingMode::IndirectX => {
-                let pointer = self.read_pointer(io, AddressingMode::Absolute8X);
-                let ll = io.read(pointer.at(0)) as u16;
-                let hh = io.read(pointer.at(1)) as u16;
+                let pointer = self.read_pointer(AddressingMode::Absolute8X);
+                let ll = self.read(pointer.at(0)) as u16;
+                let hh = self.read(pointer.at(1)) as u16;
                 Pointer::new16(hh << 8 | ll)
             }
             AddressingMode::Immediate => {
@@ -335,67 +312,67 @@ impl Apu {
         }
     }
 
-    fn get_operand_u8(&mut self, io: &mut ApuIo, operand: Operand) -> u8 {
+    fn get_operand_u8(&mut self, operand: Operand) -> u8 {
         match operand {
             Operand::A => self.a,
             Operand::X => self.x,
             Operand::Y => self.y,
             Operand::SP => self.sp,
             Operand::YA => panic!(),
-            Operand::Memory(pointer) => io.read(pointer.at(0)),
+            Operand::Memory(pointer) => self.read(pointer.at(0)),
         }
     }
 
-    fn get_operand_u16(&mut self, io: &mut ApuIo, operand: Operand) -> u16 {
+    fn get_operand_u16(&mut self, operand: Operand) -> u16 {
         match operand {
             Operand::YA => self.get_ya(),
             Operand::Memory(pointer) => {
-                let ll = io.read(pointer.at(0));
-                let hh = io.read(pointer.at(1));
+                let ll = self.read(pointer.at(0));
+                let hh = self.read(pointer.at(1));
                 (hh as u16) << 8 | ll as u16
             }
             _ => panic!(),
         }
     }
 
-    fn set_operand_u8(&mut self, io: &mut ApuIo, operand: Operand, value: u8) {
+    fn set_operand_u8(&mut self, operand: Operand, value: u8) {
         match operand {
             Operand::A => self.a = value,
             Operand::X => self.x = value,
             Operand::Y => self.y = value,
             Operand::SP => self.sp = value,
             Operand::YA => panic!(),
-            Operand::Memory(pointer) => io.write(pointer.at(0), value),
+            Operand::Memory(pointer) => self.write(pointer.at(0), value),
         }
     }
 
-    fn set_operand_u16(&mut self, io: &mut ApuIo, operand: Operand, value: u16) {
+    fn set_operand_u16(&mut self, operand: Operand, value: u16) {
         match operand {
             Operand::YA => self.set_ya(value),
             Operand::Memory(pointer) => {
-                io.write(pointer.at(0), value as u8);
-                io.write(pointer.at(1), (value >> 8) as u8);
+                self.write(pointer.at(0), value as u8);
+                self.write(pointer.at(1), (value >> 8) as u8);
             }
             _ => panic!(),
         }
     }
 
-    fn push8(&mut self, io: &mut ApuIo, value: u8) {
-        io.write(0x0100 | self.sp as u16, value);
+    fn push8(&mut self, value: u8) {
+        self.write(0x0100 | self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    fn pop8(&mut self, io: &mut ApuIo) -> u8 {
+    fn pop8(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        io.read(0x0100 | self.sp as u16)
+        self.read(0x0100 | self.sp as u16)
     }
 
-    fn inst_mov(&mut self, io: &mut ApuIo, dst: impl Target, src: impl Target, update_flags: bool) {
-        let src_op = src.resolve(self, io);
-        let dst_op = dst.resolve(self, io);
+    fn inst_mov(&mut self, dst: impl Target, src: impl Target, update_flags: bool) {
+        let src_op = src.resolve(self);
+        let dst_op = dst.resolve(self);
 
-        let value = self.get_operand_u8(io, src_op);
-        self.set_operand_u8(io, dst_op, value);
+        let value = self.get_operand_u8(src_op);
+        self.set_operand_u8(dst_op, value);
 
         if update_flags {
             self.psw.n = value & 0x80 != 0;
@@ -403,30 +380,18 @@ impl Apu {
         }
     }
 
-    fn inst_mov_with_dummy_read(
-        &mut self,
-        io: &mut ApuIo,
-        dst: impl Target,
-        src: impl Target,
-        update_flags: bool,
-    ) {
-        let src_op = src.resolve(self, io);
-        let dst_op = dst.resolve(self, io);
-        self.get_operand_u8(io, dst_op);
-        self.inst_mov(io, dst_op, src_op, update_flags);
+    fn inst_mov_with_dummy_read(&mut self, dst: impl Target, src: impl Target, update_flags: bool) {
+        let src_op = src.resolve(self);
+        let dst_op = dst.resolve(self);
+        self.get_operand_u8(dst_op);
+        self.inst_mov(dst_op, src_op, update_flags);
     }
 
-    fn inst_movw(
-        &mut self,
-        io: &mut ApuIo,
-        dst: impl Target,
-        src: impl Target,
-        update_flags: bool,
-    ) {
-        let src_op = src.resolve(self, io);
-        let dst_op = dst.resolve(self, io);
-        let value = self.get_operand_u16(io, src_op);
-        self.set_operand_u16(io, dst_op, value);
+    fn inst_movw(&mut self, dst: impl Target, src: impl Target, update_flags: bool) {
+        let src_op = src.resolve(self);
+        let dst_op = dst.resolve(self);
+        let value = self.get_operand_u16(src_op);
+        self.set_operand_u16(dst_op, value);
 
         if update_flags {
             self.psw.n = value & 0x8000 != 0;
@@ -436,71 +401,71 @@ impl Apu {
 
     fn inst_movw_with_dummy_read(
         &mut self,
-        io: &mut ApuIo,
+
         dst: impl Target,
         src: impl Target,
         update_flags: bool,
     ) {
-        let src_op = src.resolve(self, io);
-        let dst_op = dst.resolve(self, io);
-        self.get_operand_u16(io, src_op);
-        self.inst_movw(io, dst_op, src_op, update_flags);
+        let src_op = src.resolve(self);
+        let dst_op = dst.resolve(self);
+        self.get_operand_u16(src_op);
+        self.inst_movw(dst_op, src_op, update_flags);
     }
 
-    fn inst_push(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let value = self.get_operand_u8(io, op);
-        self.push8(io, value);
+    fn inst_push(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let value = self.get_operand_u8(op);
+        self.push8(value);
     }
 
-    fn inst_push_psw(&mut self, io: &mut ApuIo) {
-        self.push8(io, self.psw.to_bits());
+    fn inst_push_psw(&mut self) {
+        self.push8(self.psw.to_bits());
     }
 
-    fn inst_pop(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let value = self.pop8(io);
-        self.set_operand_u8(io, op, value);
+    fn inst_pop(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let value = self.pop8();
+        self.set_operand_u8(op, value);
     }
 
-    fn inst_pop_psw(&mut self, io: &mut ApuIo) {
-        let value = self.pop8(io);
+    fn inst_pop_psw(&mut self) {
+        let value = self.pop8();
         self.psw.set_from_bits(value);
     }
 
-    fn inst_or(&mut self, io: &mut ApuIo, target_a: impl Target, target_b: impl Target) {
-        let op_b = target_b.resolve(self, io);
-        let op_a = target_a.resolve(self, io);
-        let result = self.get_operand_u8(io, op_a) | self.get_operand_u8(io, op_b);
+    fn inst_or(&mut self, target_a: impl Target, target_b: impl Target) {
+        let op_b = target_b.resolve(self);
+        let op_a = target_a.resolve(self);
+        let result = self.get_operand_u8(op_a) | self.get_operand_u8(op_b);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result == 0;
-        self.set_operand_u8(io, op_a, result);
+        self.set_operand_u8(op_a, result);
     }
 
-    fn inst_and(&mut self, io: &mut ApuIo, target_a: impl Target, target_b: impl Target) {
-        let op_b = target_b.resolve(self, io);
-        let op_a = target_a.resolve(self, io);
-        let result = self.get_operand_u8(io, op_a) & self.get_operand_u8(io, op_b);
+    fn inst_and(&mut self, target_a: impl Target, target_b: impl Target) {
+        let op_b = target_b.resolve(self);
+        let op_a = target_a.resolve(self);
+        let result = self.get_operand_u8(op_a) & self.get_operand_u8(op_b);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result == 0;
-        self.set_operand_u8(io, op_a, result);
+        self.set_operand_u8(op_a, result);
     }
 
-    fn inst_eor(&mut self, io: &mut ApuIo, target_a: impl Target, target_b: impl Target) {
-        let op_b = target_b.resolve(self, io);
-        let op_a = target_a.resolve(self, io);
-        let result = self.get_operand_u8(io, op_a) ^ self.get_operand_u8(io, op_b);
+    fn inst_eor(&mut self, target_a: impl Target, target_b: impl Target) {
+        let op_b = target_b.resolve(self);
+        let op_a = target_a.resolve(self);
+        let result = self.get_operand_u8(op_a) ^ self.get_operand_u8(op_b);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result == 0;
-        self.set_operand_u8(io, op_a, result);
+        self.set_operand_u8(op_a, result);
     }
 
-    fn inst_cmp(&mut self, io: &mut ApuIo, target_a: impl Target, target_b: impl Target) {
-        let op_b = target_b.resolve(self, io);
-        let op_a = target_a.resolve(self, io);
+    fn inst_cmp(&mut self, target_a: impl Target, target_b: impl Target) {
+        let op_b = target_b.resolve(self);
+        let op_a = target_a.resolve(self);
 
-        let a = self.get_operand_u8(io, op_a);
-        let b = self.get_operand_u8(io, op_b);
+        let a = self.get_operand_u8(op_a);
+        let b = self.get_operand_u8(op_b);
 
         let (result, carry) = a.overflowing_sub(b);
         self.psw.n = result & 0x80 != 0;
@@ -508,16 +473,16 @@ impl Apu {
         self.psw.c = !carry;
     }
 
-    fn inst_adc(&mut self, io: &mut ApuIo, target_a: impl Target, target_b: impl Target) {
-        let op_b = target_b.resolve(self, io);
-        let op_a = target_a.resolve(self, io);
+    fn inst_adc(&mut self, target_a: impl Target, target_b: impl Target) {
+        let op_b = target_b.resolve(self);
+        let op_a = target_a.resolve(self);
 
-        let a = self.get_operand_u8(io, op_a) as u16;
-        let b = self.get_operand_u8(io, op_b) as u16;
+        let a = self.get_operand_u8(op_a) as u16;
+        let b = self.get_operand_u8(op_b) as u16;
         let c = self.psw.c as u16;
 
         let result = a + b + c;
-        self.set_operand_u8(io, op_a, result as u8);
+        self.set_operand_u8(op_a, result as u8);
         self.psw.n = result & 0x80 != 0;
         self.psw.v = ((!(a ^ b) & (a ^ result)) & 0x80) != 0;
         self.psw.h = ((a & 0xF) + (b & 0xF) + c) > 0x0F;
@@ -525,16 +490,16 @@ impl Apu {
         self.psw.c = result > 0xFF;
     }
 
-    fn inst_sbc(&mut self, io: &mut ApuIo, target_a: impl Target, target_b: impl Target) {
-        let op_b = target_b.resolve(self, io);
-        let op_a = target_a.resolve(self, io);
+    fn inst_sbc(&mut self, target_a: impl Target, target_b: impl Target) {
+        let op_b = target_b.resolve(self);
+        let op_a = target_a.resolve(self);
 
-        let a = self.get_operand_u8(io, op_a) as u16;
-        let b = !self.get_operand_u8(io, op_b) as u16;
+        let a = self.get_operand_u8(op_a) as u16;
+        let b = !self.get_operand_u8(op_b) as u16;
         let c = self.psw.c as u16;
 
         let result = a + b + c;
-        self.set_operand_u8(io, op_a, result as u8);
+        self.set_operand_u8(op_a, result as u8);
         self.psw.n = result & 0x80 != 0;
         self.psw.v = ((!(a ^ b) & (a ^ result)) & 0x80) != 0;
         self.psw.h = ((a & 0xF) + (b & 0xF) + c) > 0x0F;
@@ -542,68 +507,68 @@ impl Apu {
         self.psw.c = result > 0xFF;
     }
 
-    fn inst_asl(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_asl(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let value = self.get_operand_u8(op);
         let result = value << 1;
-        self.set_operand_u8(io, op, result);
+        self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result == 0;
         self.psw.c = value & 0x80 != 0;
     }
 
-    fn inst_rol(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_rol(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let value = self.get_operand_u8(op);
         let carry = self.psw.c;
         let result = value << 1 | carry as u8;
-        self.set_operand_u8(io, op, result);
+        self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result == 0;
         self.psw.c = value & 0x80 != 0;
     }
 
-    fn inst_lsr(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_lsr(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let value = self.get_operand_u8(op);
         let result = value >> 1;
-        self.set_operand_u8(io, op, result);
+        self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result == 0;
         self.psw.c = value & 0x01 != 0;
     }
 
-    fn inst_ror(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_ror(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let value = self.get_operand_u8(op);
         let carry = self.psw.c;
         let result = value >> 1 | (carry as u8) << 7;
-        self.set_operand_u8(io, op, result);
+        self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result == 0;
         self.psw.c = value & 0x01 != 0;
     }
 
-    fn inst_dec(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let result = self.get_operand_u8(io, op).wrapping_sub(1);
-        self.set_operand_u8(io, op, result);
+    fn inst_dec(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let result = self.get_operand_u8(op).wrapping_sub(1);
+        self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result & 0xFF == 0;
     }
 
-    fn inst_inc(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let result = self.get_operand_u8(io, op).wrapping_add(1);
-        self.set_operand_u8(io, op, result);
+    fn inst_inc(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let result = self.get_operand_u8(op).wrapping_add(1);
+        self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
         self.psw.z = result & 0xFF == 0;
     }
 
-    fn inst_addw(&mut self, io: &mut ApuIo) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
+    fn inst_addw(&mut self) {
+        let op = AddressingMode::Absolute8.resolve(self);
         let a = self.get_ya() as u32;
-        let b = self.get_operand_u16(io, op) as u32;
+        let b = self.get_operand_u16(op) as u32;
 
         let result = a + b;
         self.set_ya(result as u16);
@@ -614,10 +579,10 @@ impl Apu {
         self.psw.c = result > 0xFFFF;
     }
 
-    fn inst_subw(&mut self, io: &mut ApuIo) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
+    fn inst_subw(&mut self) {
+        let op = AddressingMode::Absolute8.resolve(self);
         let a = self.get_ya() as u32;
-        let b = -(self.get_operand_u16(io, op) as i16) as u16 as u32;
+        let b = -(self.get_operand_u16(op) as i16) as u16 as u32;
 
         let result = a + b;
         self.set_ya(result as u16);
@@ -628,10 +593,10 @@ impl Apu {
         self.psw.c = result > 0xFFFF;
     }
 
-    fn inst_cmpw(&mut self, io: &mut ApuIo) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
+    fn inst_cmpw(&mut self) {
+        let op = AddressingMode::Absolute8.resolve(self);
         let a = self.get_ya() as u32;
-        let b = self.get_operand_u16(io, op) as u32;
+        let b = self.get_operand_u16(op) as u32;
 
         let (result, carry) = a.overflowing_sub(b);
         self.psw.n = result & 0x8000 != 0;
@@ -639,18 +604,18 @@ impl Apu {
         self.psw.c = !carry;
     }
 
-    fn inst_incw(&mut self, io: &mut ApuIo) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
-        let result = self.get_operand_u16(io, op).wrapping_add(1);
-        self.set_operand_u16(io, op, result);
+    fn inst_incw(&mut self) {
+        let op = AddressingMode::Absolute8.resolve(self);
+        let result = self.get_operand_u16(op).wrapping_add(1);
+        self.set_operand_u16(op, result);
         self.psw.n = result & 0x8000 != 0;
         self.psw.z = result == 0;
     }
 
-    fn inst_decw(&mut self, io: &mut ApuIo) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
-        let result = self.get_operand_u16(io, op).wrapping_sub(1);
-        self.set_operand_u16(io, op, result);
+    fn inst_decw(&mut self) {
+        let op = AddressingMode::Absolute8.resolve(self);
+        let result = self.get_operand_u16(op).wrapping_sub(1);
+        self.set_operand_u16(op, result);
         self.psw.n = result & 0x8000 != 0;
         self.psw.z = result == 0;
     }
@@ -679,75 +644,75 @@ impl Apu {
         self.psw.z = self.y == 0;
     }
 
-    fn inst_clr1(&mut self, io: &mut ApuIo, bit: u8) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
-        let mut value = self.get_operand_u8(io, op);
+    fn inst_clr1(&mut self, bit: u8) {
+        let op = AddressingMode::Absolute8.resolve(self);
+        let mut value = self.get_operand_u8(op);
         value &= !(1 << bit);
-        self.set_operand_u8(io, op, value);
+        self.set_operand_u8(op, value);
     }
 
-    fn inst_set1(&mut self, io: &mut ApuIo, bit: u8) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
-        let mut value = self.get_operand_u8(io, op);
+    fn inst_set1(&mut self, bit: u8) {
+        let op = AddressingMode::Absolute8.resolve(self);
+        let mut value = self.get_operand_u8(op);
         value |= 1 << bit;
-        self.set_operand_u8(io, op, value);
+        self.set_operand_u8(op, value);
     }
 
-    fn read_1bit_operand(&mut self, io: &mut ApuIo) -> (Operand, u8) {
-        let ll = self.next_instr_byte(io);
-        let hh = self.next_instr_byte(io);
+    fn read_1bit_operand(&mut self) -> (Operand, u8) {
+        let ll = self.next_instr_byte();
+        let hh = self.next_instr_byte();
         let addr = (hh as u16 & 0x1F) << 8 | ll as u16;
         let bit = hh >> 5;
         (Operand::Memory(Pointer::new16(addr)), bit)
     }
 
-    fn inst_not1(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let mut value = self.get_operand_u8(io, op);
+    fn inst_not1(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let mut value = self.get_operand_u8(op);
         value ^= 1 << bit;
-        self.set_operand_u8(io, op, value);
+        self.set_operand_u8(op, value);
     }
 
-    fn inst_mov1_from_c(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let mut value = self.get_operand_u8(io, op);
+    fn inst_mov1_from_c(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let mut value = self.get_operand_u8(op);
         value = value & !(1 << bit) | (self.psw.c as u8) << bit;
-        self.set_operand_u8(io, op, value);
+        self.set_operand_u8(op, value);
     }
 
-    fn inst_mov1_into_c(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_mov1_into_c(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let value = self.get_operand_u8(op);
         self.psw.c = value >> bit & 1 != 0;
     }
 
-    fn inst_or1(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_or1(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let value = self.get_operand_u8(op);
         self.psw.c |= value >> bit & 1 != 0;
     }
 
-    fn inst_or1_not(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_or1_not(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let value = self.get_operand_u8(op);
         self.psw.c |= value >> bit & 1 == 0;
     }
 
-    fn inst_and1(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_and1(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let value = self.get_operand_u8(op);
         self.psw.c &= (value >> bit) & 1 != 0;
     }
 
-    fn inst_and1_not(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_and1_not(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let value = self.get_operand_u8(op);
         self.psw.c &= value >> bit & 1 == 0;
     }
 
-    fn inst_eor1(&mut self, io: &mut ApuIo) {
-        let (op, bit) = self.read_1bit_operand(io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_eor1(&mut self) {
+        let (op, bit) = self.read_1bit_operand();
+        let value = self.get_operand_u8(op);
         self.psw.c ^= value >> bit & 1 != 0;
     }
 
@@ -799,353 +764,353 @@ impl Apu {
         self.psw.z = self.a == 0;
     }
 
-    fn inst_tclr1(&mut self, io: &mut ApuIo) {
-        let op = AddressingMode::Absolute16.resolve(self, io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_tclr1(&mut self) {
+        let op = AddressingMode::Absolute16.resolve(self);
+        let value = self.get_operand_u8(op);
         let result = value & !self.a;
-        self.set_operand_u8(io, op, result);
+        self.set_operand_u8(op, result);
         self.psw.n = (self.a.wrapping_sub(value)) & 0x80 != 0;
         self.psw.z = value == self.a;
     }
 
-    fn inst_tset1(&mut self, io: &mut ApuIo) {
-        let op = AddressingMode::Absolute16.resolve(self, io);
-        let value = self.get_operand_u8(io, op);
+    fn inst_tset1(&mut self) {
+        let op = AddressingMode::Absolute16.resolve(self);
+        let value = self.get_operand_u8(op);
         let result = value | self.a;
-        self.set_operand_u8(io, op, result);
+        self.set_operand_u8(op, result);
         self.psw.n = (self.a.wrapping_sub(value)) & 0x80 != 0;
         self.psw.z = value == self.a;
     }
 
-    fn inst_bra(&mut self, io: &mut ApuIo, branch: bool) {
-        let rr = self.next_instr_byte(io) as i8;
+    fn inst_bra(&mut self, branch: bool) {
+        let rr = self.next_instr_byte() as i8;
         if branch {
             self.pc = self.pc.wrapping_add_signed(rr as i16);
         }
     }
 
-    fn inst_bbs(&mut self, io: &mut ApuIo, bit: u8) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
-        let rr = self.next_instr_byte(io) as i8;
-        let value = self.get_operand_u8(io, op);
+    fn inst_bbs(&mut self, bit: u8) {
+        let op = AddressingMode::Absolute8.resolve(self);
+        let rr = self.next_instr_byte() as i8;
+        let value = self.get_operand_u8(op);
         if value & (1 << bit) != 0 {
             self.pc = self.pc.wrapping_add_signed(rr as i16);
         }
     }
 
-    fn inst_bbc(&mut self, io: &mut ApuIo, bit: u8) {
-        let op = AddressingMode::Absolute8.resolve(self, io);
-        let rr = self.next_instr_byte(io) as i8;
-        let value = self.get_operand_u8(io, op);
+    fn inst_bbc(&mut self, bit: u8) {
+        let op = AddressingMode::Absolute8.resolve(self);
+        let rr = self.next_instr_byte() as i8;
+        let value = self.get_operand_u8(op);
         if value & (1 << bit) == 0 {
             self.pc = self.pc.wrapping_add_signed(rr as i16);
         }
     }
 
-    fn inst_cbne(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let rr = self.next_instr_byte(io) as i8;
-        let value = self.get_operand_u8(io, op);
+    fn inst_cbne(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let rr = self.next_instr_byte() as i8;
+        let value = self.get_operand_u8(op);
         if value != self.a {
             self.pc = self.pc.wrapping_add_signed(rr as i16);
         }
     }
 
-    fn inst_dbnz(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        let rr = self.next_instr_byte(io) as i8;
-        let value = self.get_operand_u8(io, op).wrapping_sub(1);
-        self.set_operand_u8(io, op, value);
+    fn inst_dbnz(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        let rr = self.next_instr_byte() as i8;
+        let value = self.get_operand_u8(op).wrapping_sub(1);
+        self.set_operand_u8(op, value);
         if value != 0 {
             self.pc = self.pc.wrapping_add_signed(rr as i16);
         }
     }
 
-    fn inst_jmp(&mut self, io: &mut ApuIo, addr_mode: AddressingMode) {
-        // let op = target.resolve(self, io);
-        // self.pc = self.get_operand_u16(io, op);
-        self.pc = self.read_pointer(io, addr_mode).addr;
+    fn inst_jmp(&mut self, addr_mode: AddressingMode) {
+        // let op = target.resolve(self, );
+        // self.pc = self.get_operand_u16(op);
+        self.pc = self.read_pointer(addr_mode).addr;
     }
 
-    fn inst_jmp2(&mut self, io: &mut ApuIo, target: impl Target) {
-        let op = target.resolve(self, io);
-        self.pc = self.get_operand_u16(io, op);
+    fn inst_jmp2(&mut self, target: impl Target) {
+        let op = target.resolve(self);
+        self.pc = self.get_operand_u16(op);
     }
 
-    fn inst_call(&mut self, io: &mut ApuIo) {
-        let ptr = self.read_pointer(io, AddressingMode::Absolute16);
-        self.push8(io, (self.pc >> 8) as u8);
-        self.push8(io, self.pc as u8);
+    fn inst_call(&mut self) {
+        let ptr = self.read_pointer(AddressingMode::Absolute16);
+        self.push8((self.pc >> 8) as u8);
+        self.push8(self.pc as u8);
         self.pc = ptr.addr;
     }
 
-    fn inst_tcall(&mut self, io: &mut ApuIo, n: u8) {
+    fn inst_tcall(&mut self, n: u8) {
         let addr = 0xFFDE - n as u16 * 2;
-        let ll = io.read(addr) as u16;
-        let hh = io.read(addr.wrapping_add(1)) as u16;
-        self.push8(io, (self.pc >> 8) as u8);
-        self.push8(io, self.pc as u8);
+        let ll = self.read(addr) as u16;
+        let hh = self.read(addr.wrapping_add(1)) as u16;
+        self.push8((self.pc >> 8) as u8);
+        self.push8(self.pc as u8);
         self.pc = hh << 8 | ll;
     }
 
-    fn inst_pcall(&mut self, io: &mut ApuIo) {
-        let nn = self.next_instr_byte(io);
-        self.push8(io, (self.pc >> 8) as u8);
-        self.push8(io, self.pc as u8);
+    fn inst_pcall(&mut self) {
+        let nn = self.next_instr_byte();
+        self.push8((self.pc >> 8) as u8);
+        self.push8(self.pc as u8);
         self.pc = 0xFF00 | nn as u16;
     }
 
-    fn inst_ret(&mut self, io: &mut ApuIo) {
-        let ll = self.pop8(io) as u16;
-        let hh = self.pop8(io) as u16;
+    fn inst_ret(&mut self) {
+        let ll = self.pop8() as u16;
+        let hh = self.pop8() as u16;
         self.pc = hh << 8 | ll;
     }
 
-    fn inst_ret1(&mut self, io: &mut ApuIo) {
-        let flags = self.pop8(io);
+    fn inst_ret1(&mut self) {
+        let flags = self.pop8();
         self.psw.set_from_bits(flags);
-        let ll = self.pop8(io) as u16;
-        let hh = self.pop8(io) as u16;
+        let ll = self.pop8() as u16;
+        let hh = self.pop8() as u16;
         self.pc = hh << 8 | ll;
     }
 
-    fn inst_brk(&mut self, io: &mut ApuIo) {
-        self.push8(io, (self.pc >> 8) as u8);
-        self.push8(io, self.pc as u8);
-        self.push8(io, self.psw.to_bits());
-        let ll = io.read(0xFFDE) as u16;
-        let hh = io.read(0xFFDF) as u16;
+    fn inst_brk(&mut self) {
+        self.push8((self.pc >> 8) as u8);
+        self.push8(self.pc as u8);
+        self.push8(self.psw.to_bits());
+        let ll = self.read(0xFFDE) as u16;
+        let hh = self.read(0xFFDF) as u16;
         self.pc = hh << 8 | ll;
         self.psw.b = true;
         self.psw.i = false;
     }
 
     #[rustfmt::skip]
-    pub fn step(&mut self, io: &mut ApuIo) {
-        if io.reset {
-            io.rom_enable = true;
-            io.cpuio_in.fill(0);
-            io.cpuio_out.fill(0);
-            let pc_ll = io.read(0xFFFE) as u16;
-            let pc_hh = io.read(0xFFFF) as u16;
+    pub fn step(&mut self) {
+        if self.reset {
+            self.rom_enable = true;
+            self.cpuio_in.fill(0);
+            self.cpuio_out.fill(0);
+            let pc_ll = self.read(0xFFFE) as u16;
+            let pc_hh = self.read(0xFFFF) as u16;
             self.pc = pc_hh << 8 | pc_ll;
-            io.reset = false;
+            self.reset = false;
         }
 
         if self.stopped {
             return;
         }
 
-        let opcode = self.next_instr_byte(io);
+        let opcode = self.next_instr_byte();
 
         match opcode {
-            0xE8 => self.inst_mov(io, Operand::A, AddressingMode::Immediate, true),
-            0xCD => self.inst_mov(io, Operand::X, AddressingMode::Immediate, true),
-            0x8D => self.inst_mov(io, Operand::Y, AddressingMode::Immediate, true),
-            0x7D => self.inst_mov(io, Operand::A, Operand::X, true),
-            0x5D => self.inst_mov(io, Operand::X, Operand::A, true),
-            0xDD => self.inst_mov(io, Operand::A, Operand::Y, true),
-            0xFD => self.inst_mov(io, Operand::Y, Operand::A, true),
-            0x9D => self.inst_mov(io, Operand::X, Operand::SP, true),
-            0xBD => self.inst_mov(io, Operand::SP, Operand::X, false),
+            0xE8 => self.inst_mov(Operand::A, AddressingMode::Immediate, true),
+            0xCD => self.inst_mov(Operand::X, AddressingMode::Immediate, true),
+            0x8D => self.inst_mov(Operand::Y, AddressingMode::Immediate, true),
+            0x7D => self.inst_mov(Operand::A, Operand::X, true),
+            0x5D => self.inst_mov(Operand::X, Operand::A, true),
+            0xDD => self.inst_mov(Operand::A, Operand::Y, true),
+            0xFD => self.inst_mov(Operand::Y, Operand::A, true),
+            0x9D => self.inst_mov(Operand::X, Operand::SP, true),
+            0xBD => self.inst_mov(Operand::SP, Operand::X, false),
 
-            0xE4 => self.inst_mov(io, Operand::A, AddressingMode::Absolute8, true),
-            0xF4 => self.inst_mov(io, Operand::A, AddressingMode::Absolute8X, true),
-            0xE5 => self.inst_mov(io, Operand::A, AddressingMode::Absolute16, true),
-            0xF5 => self.inst_mov(io, Operand::A, AddressingMode::Absolute16X, true),
-            0xF6 => self.inst_mov(io, Operand::A, AddressingMode::Absolute16Y, true),
-            0xE6 => self.inst_mov(io, Operand::A, AddressingMode::DirectX, true),
-            0xBF => self.inst_mov(io, Operand::A, AddressingMode::DirectXInc, true),
-            0xF7 => self.inst_mov(io, Operand::A, AddressingMode::IndirectY, true),
-            0xE7 => self.inst_mov(io, Operand::A, AddressingMode::IndirectX, true),
-            0xF8 => self.inst_mov(io, Operand::X, AddressingMode::Absolute8, true),
-            0xF9 => self.inst_mov(io, Operand::X, AddressingMode::Absolute8Y, true),
-            0xE9 => self.inst_mov(io, Operand::X, AddressingMode::Absolute16, true),
-            0xEB => self.inst_mov(io, Operand::Y, AddressingMode::Absolute8, true),
-            0xFB => self.inst_mov(io, Operand::Y, AddressingMode::Absolute8X, true),
-            0xEC => self.inst_mov(io, Operand::Y, AddressingMode::Absolute16, true),
-            0xBA => self.inst_movw(io, Operand::YA, AddressingMode::Absolute8, true),
+            0xE4 => self.inst_mov(Operand::A, AddressingMode::Absolute8, true),
+            0xF4 => self.inst_mov(Operand::A, AddressingMode::Absolute8X, true),
+            0xE5 => self.inst_mov(Operand::A, AddressingMode::Absolute16, true),
+            0xF5 => self.inst_mov(Operand::A, AddressingMode::Absolute16X, true),
+            0xF6 => self.inst_mov(Operand::A, AddressingMode::Absolute16Y, true),
+            0xE6 => self.inst_mov(Operand::A, AddressingMode::DirectX, true),
+            0xBF => self.inst_mov(Operand::A, AddressingMode::DirectXInc, true),
+            0xF7 => self.inst_mov(Operand::A, AddressingMode::IndirectY, true),
+            0xE7 => self.inst_mov(Operand::A, AddressingMode::IndirectX, true),
+            0xF8 => self.inst_mov(Operand::X, AddressingMode::Absolute8, true),
+            0xF9 => self.inst_mov(Operand::X, AddressingMode::Absolute8Y, true),
+            0xE9 => self.inst_mov(Operand::X, AddressingMode::Absolute16, true),
+            0xEB => self.inst_mov(Operand::Y, AddressingMode::Absolute8, true),
+            0xFB => self.inst_mov(Operand::Y, AddressingMode::Absolute8X, true),
+            0xEC => self.inst_mov(Operand::Y, AddressingMode::Absolute16, true),
+            0xBA => self.inst_movw(Operand::YA, AddressingMode::Absolute8, true),
 
-            0x8F => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute8, AddressingMode::Immediate, false),
-            0xFA => self.inst_mov(io, AddressingMode::Absolute8, AddressingMode::Absolute8, false),
-            0xC4 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute8, Operand::A, false),
-            0xD8 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute8, Operand::X, false),
-            0xCB => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute8, Operand::Y, false),
-            0xD4 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute8X, Operand::A, false),
-            0xDB => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute8X, Operand::Y, false),
-            0xD9 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute8Y, Operand::X, false),
-            0xC5 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute16, Operand::A, false),
-            0xC9 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute16, Operand::X, false),
-            0xCC => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute16, Operand::Y, false),
-            0xD5 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute16X, Operand::A, false),
-            0xD6 => self.inst_mov_with_dummy_read(io, AddressingMode::Absolute16Y, Operand::A, false),
-            0xAF => self.inst_mov(io, AddressingMode::DirectXInc, Operand::A, false),
-            0xC6 => self.inst_mov_with_dummy_read(io, AddressingMode::DirectX, Operand::A, false),
-            0xD7 => self.inst_mov_with_dummy_read(io, AddressingMode::IndirectY, Operand::A, false),
-            0xC7 => self.inst_mov_with_dummy_read(io, AddressingMode::IndirectX, Operand::A, false),
-            0xDA => self.inst_movw_with_dummy_read(io, AddressingMode::Absolute8, Operand::YA, false),
+            0x8F => self.inst_mov_with_dummy_read(AddressingMode::Absolute8, AddressingMode::Immediate, false),
+            0xFA => self.inst_mov(AddressingMode::Absolute8, AddressingMode::Absolute8, false),
+            0xC4 => self.inst_mov_with_dummy_read(AddressingMode::Absolute8, Operand::A, false),
+            0xD8 => self.inst_mov_with_dummy_read(AddressingMode::Absolute8, Operand::X, false),
+            0xCB => self.inst_mov_with_dummy_read(AddressingMode::Absolute8, Operand::Y, false),
+            0xD4 => self.inst_mov_with_dummy_read(AddressingMode::Absolute8X, Operand::A, false),
+            0xDB => self.inst_mov_with_dummy_read(AddressingMode::Absolute8X, Operand::Y, false),
+            0xD9 => self.inst_mov_with_dummy_read(AddressingMode::Absolute8Y, Operand::X, false),
+            0xC5 => self.inst_mov_with_dummy_read(AddressingMode::Absolute16, Operand::A, false),
+            0xC9 => self.inst_mov_with_dummy_read(AddressingMode::Absolute16, Operand::X, false),
+            0xCC => self.inst_mov_with_dummy_read(AddressingMode::Absolute16, Operand::Y, false),
+            0xD5 => self.inst_mov_with_dummy_read(AddressingMode::Absolute16X, Operand::A, false),
+            0xD6 => self.inst_mov_with_dummy_read(AddressingMode::Absolute16Y, Operand::A, false),
+            0xAF => self.inst_mov(AddressingMode::DirectXInc, Operand::A, false),
+            0xC6 => self.inst_mov_with_dummy_read(AddressingMode::DirectX, Operand::A, false),
+            0xD7 => self.inst_mov_with_dummy_read(AddressingMode::IndirectY, Operand::A, false),
+            0xC7 => self.inst_mov_with_dummy_read(AddressingMode::IndirectX, Operand::A, false),
+            0xDA => self.inst_movw_with_dummy_read(AddressingMode::Absolute8, Operand::YA, false),
 
-            0x2D => self.inst_push(io, Operand::A),
-            0x4D => self.inst_push(io, Operand::X),
-            0x6D => self.inst_push(io, Operand::Y),
-            0x0D => self.inst_push_psw(io),
-            0xAE => self.inst_pop(io, Operand::A),
-            0xCE => self.inst_pop(io, Operand::X),
-            0xEE => self.inst_pop(io, Operand::Y),
-            0x8E => self.inst_pop_psw(io),
+            0x2D => self.inst_push(Operand::A),
+            0x4D => self.inst_push(Operand::X),
+            0x6D => self.inst_push(Operand::Y),
+            0x0D => self.inst_push_psw(),
+            0xAE => self.inst_pop(Operand::A),
+            0xCE => self.inst_pop(Operand::X),
+            0xEE => self.inst_pop(Operand::Y),
+            0x8E => self.inst_pop_psw(),
 
-            0x08 => self.inst_or(io, Operand::A, AddressingMode::Immediate),
-            0x06 => self.inst_or(io, Operand::A, AddressingMode::DirectX),
-            0x04 => self.inst_or(io, Operand::A, AddressingMode::Absolute8),
-            0x14 => self.inst_or(io, Operand::A, AddressingMode::Absolute8X),
-            0x05 => self.inst_or(io, Operand::A, AddressingMode::Absolute16),
-            0x15 => self.inst_or(io, Operand::A, AddressingMode::Absolute16X),
-            0x16 => self.inst_or(io, Operand::A, AddressingMode::Absolute16Y),
-            0x17 => self.inst_or(io, Operand::A, AddressingMode::IndirectY),
-            0x07 => self.inst_or(io, Operand::A, AddressingMode::IndirectX),
-            0x09 => self.inst_or(io, AddressingMode::Absolute8, AddressingMode::Absolute8),
-            0x18 => self.inst_or(io, AddressingMode::Absolute8, AddressingMode::Immediate),
-            0x19 => self.inst_or(io, AddressingMode::DirectX, AddressingMode::DirectY),
+            0x08 => self.inst_or(Operand::A, AddressingMode::Immediate),
+            0x06 => self.inst_or(Operand::A, AddressingMode::DirectX),
+            0x04 => self.inst_or(Operand::A, AddressingMode::Absolute8),
+            0x14 => self.inst_or(Operand::A, AddressingMode::Absolute8X),
+            0x05 => self.inst_or(Operand::A, AddressingMode::Absolute16),
+            0x15 => self.inst_or(Operand::A, AddressingMode::Absolute16X),
+            0x16 => self.inst_or(Operand::A, AddressingMode::Absolute16Y),
+            0x17 => self.inst_or(Operand::A, AddressingMode::IndirectY),
+            0x07 => self.inst_or(Operand::A, AddressingMode::IndirectX),
+            0x09 => self.inst_or(AddressingMode::Absolute8, AddressingMode::Absolute8),
+            0x18 => self.inst_or(AddressingMode::Absolute8, AddressingMode::Immediate),
+            0x19 => self.inst_or(AddressingMode::DirectX, AddressingMode::DirectY),
 
-            0x28 => self.inst_and(io, Operand::A, AddressingMode::Immediate),
-            0x26 => self.inst_and(io, Operand::A, AddressingMode::DirectX),
-            0x24 => self.inst_and(io, Operand::A, AddressingMode::Absolute8),
-            0x34 => self.inst_and(io, Operand::A, AddressingMode::Absolute8X),
-            0x25 => self.inst_and(io, Operand::A, AddressingMode::Absolute16),
-            0x35 => self.inst_and(io, Operand::A, AddressingMode::Absolute16X),
-            0x36 => self.inst_and(io, Operand::A, AddressingMode::Absolute16Y),
-            0x37 => self.inst_and(io, Operand::A, AddressingMode::IndirectY),
-            0x27 => self.inst_and(io, Operand::A, AddressingMode::IndirectX),
-            0x29 => self.inst_and(io, AddressingMode::Absolute8, AddressingMode::Absolute8),
-            0x38 => self.inst_and(io, AddressingMode::Absolute8, AddressingMode::Immediate),
-            0x39 => self.inst_and(io, AddressingMode::DirectX, AddressingMode::DirectY),
+            0x28 => self.inst_and(Operand::A, AddressingMode::Immediate),
+            0x26 => self.inst_and(Operand::A, AddressingMode::DirectX),
+            0x24 => self.inst_and(Operand::A, AddressingMode::Absolute8),
+            0x34 => self.inst_and(Operand::A, AddressingMode::Absolute8X),
+            0x25 => self.inst_and(Operand::A, AddressingMode::Absolute16),
+            0x35 => self.inst_and(Operand::A, AddressingMode::Absolute16X),
+            0x36 => self.inst_and(Operand::A, AddressingMode::Absolute16Y),
+            0x37 => self.inst_and(Operand::A, AddressingMode::IndirectY),
+            0x27 => self.inst_and(Operand::A, AddressingMode::IndirectX),
+            0x29 => self.inst_and(AddressingMode::Absolute8, AddressingMode::Absolute8),
+            0x38 => self.inst_and(AddressingMode::Absolute8, AddressingMode::Immediate),
+            0x39 => self.inst_and(AddressingMode::DirectX, AddressingMode::DirectY),
 
-            0x48 => self.inst_eor(io, Operand::A, AddressingMode::Immediate),
-            0x46 => self.inst_eor(io, Operand::A, AddressingMode::DirectX),
-            0x44 => self.inst_eor(io, Operand::A, AddressingMode::Absolute8),
-            0x54 => self.inst_eor(io, Operand::A, AddressingMode::Absolute8X),
-            0x45 => self.inst_eor(io, Operand::A, AddressingMode::Absolute16),
-            0x55 => self.inst_eor(io, Operand::A, AddressingMode::Absolute16X),
-            0x56 => self.inst_eor(io, Operand::A, AddressingMode::Absolute16Y),
-            0x57 => self.inst_eor(io, Operand::A, AddressingMode::IndirectY),
-            0x47 => self.inst_eor(io, Operand::A, AddressingMode::IndirectX),
-            0x49 => self.inst_eor(io, AddressingMode::Absolute8, AddressingMode::Absolute8),
-            0x58 => self.inst_eor(io, AddressingMode::Absolute8, AddressingMode::Immediate),
-            0x59 => self.inst_eor(io, AddressingMode::DirectX, AddressingMode::DirectY),
+            0x48 => self.inst_eor(Operand::A, AddressingMode::Immediate),
+            0x46 => self.inst_eor(Operand::A, AddressingMode::DirectX),
+            0x44 => self.inst_eor(Operand::A, AddressingMode::Absolute8),
+            0x54 => self.inst_eor(Operand::A, AddressingMode::Absolute8X),
+            0x45 => self.inst_eor(Operand::A, AddressingMode::Absolute16),
+            0x55 => self.inst_eor(Operand::A, AddressingMode::Absolute16X),
+            0x56 => self.inst_eor(Operand::A, AddressingMode::Absolute16Y),
+            0x57 => self.inst_eor(Operand::A, AddressingMode::IndirectY),
+            0x47 => self.inst_eor(Operand::A, AddressingMode::IndirectX),
+            0x49 => self.inst_eor(AddressingMode::Absolute8, AddressingMode::Absolute8),
+            0x58 => self.inst_eor(AddressingMode::Absolute8, AddressingMode::Immediate),
+            0x59 => self.inst_eor(AddressingMode::DirectX, AddressingMode::DirectY),
 
-            0x68 => self.inst_cmp(io, Operand::A, AddressingMode::Immediate),
-            0x66 => self.inst_cmp(io, Operand::A, AddressingMode::DirectX),
-            0x64 => self.inst_cmp(io, Operand::A, AddressingMode::Absolute8),
-            0x74 => self.inst_cmp(io, Operand::A, AddressingMode::Absolute8X),
-            0x65 => self.inst_cmp(io, Operand::A, AddressingMode::Absolute16),
-            0x75 => self.inst_cmp(io, Operand::A, AddressingMode::Absolute16X),
-            0x76 => self.inst_cmp(io, Operand::A, AddressingMode::Absolute16Y),
-            0x77 => self.inst_cmp(io, Operand::A, AddressingMode::IndirectY),
-            0x67 => self.inst_cmp(io, Operand::A, AddressingMode::IndirectX),
-            0x69 => self.inst_cmp(io, AddressingMode::Absolute8, AddressingMode::Absolute8),
-            0x78 => self.inst_cmp(io, AddressingMode::Absolute8, AddressingMode::Immediate),
-            0x79 => self.inst_cmp(io, AddressingMode::DirectX, AddressingMode::DirectY),
-            0xC8 => self.inst_cmp(io, Operand::X, AddressingMode::Immediate),
-            0x3E => self.inst_cmp(io, Operand::X, AddressingMode::Absolute8),
-            0x1E => self.inst_cmp(io, Operand::X, AddressingMode::Absolute16),
-            0xAD => self.inst_cmp(io, Operand::Y, AddressingMode::Immediate),
-            0x7E => self.inst_cmp(io, Operand::Y, AddressingMode::Absolute8),
-            0x5E => self.inst_cmp(io, Operand::Y, AddressingMode::Absolute16),
+            0x68 => self.inst_cmp(Operand::A, AddressingMode::Immediate),
+            0x66 => self.inst_cmp(Operand::A, AddressingMode::DirectX),
+            0x64 => self.inst_cmp(Operand::A, AddressingMode::Absolute8),
+            0x74 => self.inst_cmp(Operand::A, AddressingMode::Absolute8X),
+            0x65 => self.inst_cmp(Operand::A, AddressingMode::Absolute16),
+            0x75 => self.inst_cmp(Operand::A, AddressingMode::Absolute16X),
+            0x76 => self.inst_cmp(Operand::A, AddressingMode::Absolute16Y),
+            0x77 => self.inst_cmp(Operand::A, AddressingMode::IndirectY),
+            0x67 => self.inst_cmp(Operand::A, AddressingMode::IndirectX),
+            0x69 => self.inst_cmp(AddressingMode::Absolute8, AddressingMode::Absolute8),
+            0x78 => self.inst_cmp(AddressingMode::Absolute8, AddressingMode::Immediate),
+            0x79 => self.inst_cmp(AddressingMode::DirectX, AddressingMode::DirectY),
+            0xC8 => self.inst_cmp(Operand::X, AddressingMode::Immediate),
+            0x3E => self.inst_cmp(Operand::X, AddressingMode::Absolute8),
+            0x1E => self.inst_cmp(Operand::X, AddressingMode::Absolute16),
+            0xAD => self.inst_cmp(Operand::Y, AddressingMode::Immediate),
+            0x7E => self.inst_cmp(Operand::Y, AddressingMode::Absolute8),
+            0x5E => self.inst_cmp(Operand::Y, AddressingMode::Absolute16),
 
-            0x88 => self.inst_adc(io, Operand::A, AddressingMode::Immediate),
-            0x86 => self.inst_adc(io, Operand::A, AddressingMode::DirectX),
-            0x84 => self.inst_adc(io, Operand::A, AddressingMode::Absolute8),
-            0x94 => self.inst_adc(io, Operand::A, AddressingMode::Absolute8X),
-            0x85 => self.inst_adc(io, Operand::A, AddressingMode::Absolute16),
-            0x95 => self.inst_adc(io, Operand::A, AddressingMode::Absolute16X),
-            0x96 => self.inst_adc(io, Operand::A, AddressingMode::Absolute16Y),
-            0x97 => self.inst_adc(io, Operand::A, AddressingMode::IndirectY),
-            0x87 => self.inst_adc(io, Operand::A, AddressingMode::IndirectX),
-            0x89 => self.inst_adc(io, AddressingMode::Absolute8, AddressingMode::Absolute8),
-            0x98 => self.inst_adc(io, AddressingMode::Absolute8, AddressingMode::Immediate),
-            0x99 => self.inst_adc(io, AddressingMode::DirectX, AddressingMode::DirectY),
+            0x88 => self.inst_adc(Operand::A, AddressingMode::Immediate),
+            0x86 => self.inst_adc(Operand::A, AddressingMode::DirectX),
+            0x84 => self.inst_adc(Operand::A, AddressingMode::Absolute8),
+            0x94 => self.inst_adc(Operand::A, AddressingMode::Absolute8X),
+            0x85 => self.inst_adc(Operand::A, AddressingMode::Absolute16),
+            0x95 => self.inst_adc(Operand::A, AddressingMode::Absolute16X),
+            0x96 => self.inst_adc(Operand::A, AddressingMode::Absolute16Y),
+            0x97 => self.inst_adc(Operand::A, AddressingMode::IndirectY),
+            0x87 => self.inst_adc(Operand::A, AddressingMode::IndirectX),
+            0x89 => self.inst_adc(AddressingMode::Absolute8, AddressingMode::Absolute8),
+            0x98 => self.inst_adc(AddressingMode::Absolute8, AddressingMode::Immediate),
+            0x99 => self.inst_adc(AddressingMode::DirectX, AddressingMode::DirectY),
 
-            0xa8 => self.inst_sbc(io, Operand::A, AddressingMode::Immediate),
-            0xa6 => self.inst_sbc(io, Operand::A, AddressingMode::DirectX),
-            0xa4 => self.inst_sbc(io, Operand::A, AddressingMode::Absolute8),
-            0xb4 => self.inst_sbc(io, Operand::A, AddressingMode::Absolute8X),
-            0xa5 => self.inst_sbc(io, Operand::A, AddressingMode::Absolute16),
-            0xb5 => self.inst_sbc(io, Operand::A, AddressingMode::Absolute16X),
-            0xb6 => self.inst_sbc(io, Operand::A, AddressingMode::Absolute16Y),
-            0xb7 => self.inst_sbc(io, Operand::A, AddressingMode::IndirectY),
-            0xa7 => self.inst_sbc(io, Operand::A, AddressingMode::IndirectX),
-            0xa9 => self.inst_sbc(io, AddressingMode::Absolute8, AddressingMode::Absolute8),
-            0xb8 => self.inst_sbc(io, AddressingMode::Absolute8, AddressingMode::Immediate),
-            0xb9 => self.inst_sbc(io, AddressingMode::DirectX, AddressingMode::DirectY),
+            0xa8 => self.inst_sbc(Operand::A, AddressingMode::Immediate),
+            0xa6 => self.inst_sbc(Operand::A, AddressingMode::DirectX),
+            0xa4 => self.inst_sbc(Operand::A, AddressingMode::Absolute8),
+            0xb4 => self.inst_sbc(Operand::A, AddressingMode::Absolute8X),
+            0xa5 => self.inst_sbc(Operand::A, AddressingMode::Absolute16),
+            0xb5 => self.inst_sbc(Operand::A, AddressingMode::Absolute16X),
+            0xb6 => self.inst_sbc(Operand::A, AddressingMode::Absolute16Y),
+            0xb7 => self.inst_sbc(Operand::A, AddressingMode::IndirectY),
+            0xa7 => self.inst_sbc(Operand::A, AddressingMode::IndirectX),
+            0xa9 => self.inst_sbc(AddressingMode::Absolute8, AddressingMode::Absolute8),
+            0xb8 => self.inst_sbc(AddressingMode::Absolute8, AddressingMode::Immediate),
+            0xb9 => self.inst_sbc(AddressingMode::DirectX, AddressingMode::DirectY),
 
-            0x1C => self.inst_asl(io, Operand::A),
-            0x0B => self.inst_asl(io, AddressingMode::Absolute8),
-            0x1B => self.inst_asl(io, AddressingMode::Absolute8X),
-            0x0C => self.inst_asl(io, AddressingMode::Absolute16),
+            0x1C => self.inst_asl(Operand::A),
+            0x0B => self.inst_asl(AddressingMode::Absolute8),
+            0x1B => self.inst_asl(AddressingMode::Absolute8X),
+            0x0C => self.inst_asl(AddressingMode::Absolute16),
 
-            0x3C => self.inst_rol(io, Operand::A),
-            0x2B => self.inst_rol(io, AddressingMode::Absolute8),
-            0x3B => self.inst_rol(io, AddressingMode::Absolute8X),
-            0x2C => self.inst_rol(io, AddressingMode::Absolute16),
+            0x3C => self.inst_rol(Operand::A),
+            0x2B => self.inst_rol(AddressingMode::Absolute8),
+            0x3B => self.inst_rol(AddressingMode::Absolute8X),
+            0x2C => self.inst_rol(AddressingMode::Absolute16),
 
-            0x5C => self.inst_lsr(io, Operand::A),
-            0x4B => self.inst_lsr(io, AddressingMode::Absolute8),
-            0x5B => self.inst_lsr(io, AddressingMode::Absolute8X),
-            0x4C => self.inst_lsr(io, AddressingMode::Absolute16),
+            0x5C => self.inst_lsr(Operand::A),
+            0x4B => self.inst_lsr(AddressingMode::Absolute8),
+            0x5B => self.inst_lsr(AddressingMode::Absolute8X),
+            0x4C => self.inst_lsr(AddressingMode::Absolute16),
 
-            0x7C => self.inst_ror(io, Operand::A),
-            0x6B => self.inst_ror(io, AddressingMode::Absolute8),
-            0x7B => self.inst_ror(io, AddressingMode::Absolute8X),
-            0x6C => self.inst_ror(io, AddressingMode::Absolute16),
+            0x7C => self.inst_ror(Operand::A),
+            0x6B => self.inst_ror(AddressingMode::Absolute8),
+            0x7B => self.inst_ror(AddressingMode::Absolute8X),
+            0x6C => self.inst_ror(AddressingMode::Absolute16),
 
-            0x9C => self.inst_dec(io, Operand::A),
-            0x1D => self.inst_dec(io, Operand::X),
-            0xDC => self.inst_dec(io, Operand::Y),
-            0x8B => self.inst_dec(io, AddressingMode::Absolute8),
-            0x9B => self.inst_dec(io, AddressingMode::Absolute8X),
-            0x8C => self.inst_dec(io, AddressingMode::Absolute16),
+            0x9C => self.inst_dec(Operand::A),
+            0x1D => self.inst_dec(Operand::X),
+            0xDC => self.inst_dec(Operand::Y),
+            0x8B => self.inst_dec(AddressingMode::Absolute8),
+            0x9B => self.inst_dec(AddressingMode::Absolute8X),
+            0x8C => self.inst_dec(AddressingMode::Absolute16),
 
-            0xBC => self.inst_inc(io, Operand::A),
-            0x3D => self.inst_inc(io, Operand::X),
-            0xFC => self.inst_inc(io, Operand::Y),
-            0xAB => self.inst_inc(io, AddressingMode::Absolute8),
-            0xBB => self.inst_inc(io, AddressingMode::Absolute8X),
-            0xAC => self.inst_inc(io, AddressingMode::Absolute16),
+            0xBC => self.inst_inc(Operand::A),
+            0x3D => self.inst_inc(Operand::X),
+            0xFC => self.inst_inc(Operand::Y),
+            0xAB => self.inst_inc(AddressingMode::Absolute8),
+            0xBB => self.inst_inc(AddressingMode::Absolute8X),
+            0xAC => self.inst_inc(AddressingMode::Absolute16),
 
-            0x7A => self.inst_addw(io),
-            0x9A => self.inst_subw(io),
-            0x5A => self.inst_cmpw(io),
-            0x3A => self.inst_incw(io),
-            0x1A => self.inst_decw(io),
+            0x7A => self.inst_addw(),
+            0x9A => self.inst_subw(),
+            0x5A => self.inst_cmpw(),
+            0x3A => self.inst_incw(),
+            0x1A => self.inst_decw(),
             0x9E => self.inst_div(),
             0xCF => self.inst_mul(),
 
-            0x12 => self.inst_clr1(io, 0),
-            0x32 => self.inst_clr1(io, 1),
-            0x52 => self.inst_clr1(io, 2),
-            0x72 => self.inst_clr1(io, 3),
-            0x92 => self.inst_clr1(io, 4),
-            0xB2 => self.inst_clr1(io, 5),
-            0xD2 => self.inst_clr1(io, 6),
-            0xF2 => self.inst_clr1(io, 7),
+            0x12 => self.inst_clr1(0),
+            0x32 => self.inst_clr1(1),
+            0x52 => self.inst_clr1(2),
+            0x72 => self.inst_clr1(3),
+            0x92 => self.inst_clr1(4),
+            0xB2 => self.inst_clr1(5),
+            0xD2 => self.inst_clr1(6),
+            0xF2 => self.inst_clr1(7),
 
-            0x02 => self.inst_set1(io, 0),
-            0x22 => self.inst_set1(io, 1),
-            0x42 => self.inst_set1(io, 2),
-            0x62 => self.inst_set1(io, 3),
-            0x82 => self.inst_set1(io, 4),
-            0xA2 => self.inst_set1(io, 5),
-            0xC2 => self.inst_set1(io, 6),
-            0xE2 => self.inst_set1(io, 7),
+            0x02 => self.inst_set1(0),
+            0x22 => self.inst_set1(1),
+            0x42 => self.inst_set1(2),
+            0x62 => self.inst_set1(3),
+            0x82 => self.inst_set1(4),
+            0xA2 => self.inst_set1(5),
+            0xC2 => self.inst_set1(6),
+            0xE2 => self.inst_set1(7),
 
-            0xEA => self.inst_not1(io),
-            0xCA => self.inst_mov1_from_c(io),
-            0xAA => self.inst_mov1_into_c(io),
-            0x0A => self.inst_or1(io),
-            0x2A => self.inst_or1_not(io),
-            0x4A => self.inst_and1(io),
-            0x6A => self.inst_and1_not(io),
-            0x8A => self.inst_eor1(io),
+            0xEA => self.inst_not1(),
+            0xCA => self.inst_mov1_from_c(),
+            0xAA => self.inst_mov1_into_c(),
+            0x0A => self.inst_or1(),
+            0x2A => self.inst_or1_not(),
+            0x4A => self.inst_and1(),
+            0x6A => self.inst_and1_not(),
+            0x8A => self.inst_eor1(),
             0x60 => self.inst_clrc(),
             0x80 => self.inst_setc(),
             0xED => self.inst_notc(),
@@ -1154,66 +1119,66 @@ impl Apu {
             0xDF => self.inst_daa(),
             0xBE => self.inst_das(),
             0x9F => self.inst_xcn(),
-            0x4E => self.inst_tclr1(io),
-            0x0E => self.inst_tset1(io),
+            0x4E => self.inst_tclr1(),
+            0x0E => self.inst_tset1(),
 
-            0x10 => self.inst_bra(io, !self.psw.n),
-            0x30 => self.inst_bra(io, self.psw.n),
-            0x50 => self.inst_bra(io, !self.psw.v),
-            0x70 => self.inst_bra(io, self.psw.v),
-            0x90 => self.inst_bra(io, !self.psw.c),
-            0xB0 => self.inst_bra(io, self.psw.c),
-            0xD0 => self.inst_bra(io, !self.psw.z),
-            0xF0 => self.inst_bra(io, self.psw.z),
+            0x10 => self.inst_bra(!self.psw.n),
+            0x30 => self.inst_bra(self.psw.n),
+            0x50 => self.inst_bra(!self.psw.v),
+            0x70 => self.inst_bra(self.psw.v),
+            0x90 => self.inst_bra(!self.psw.c),
+            0xB0 => self.inst_bra(self.psw.c),
+            0xD0 => self.inst_bra(!self.psw.z),
+            0xF0 => self.inst_bra(self.psw.z),
 
-            0x03 => self.inst_bbs(io, 0),
-            0x23 => self.inst_bbs(io, 1),
-            0x43 => self.inst_bbs(io, 2),
-            0x63 => self.inst_bbs(io, 3),
-            0x83 => self.inst_bbs(io, 4),
-            0xA3 => self.inst_bbs(io, 5),
-            0xC3 => self.inst_bbs(io, 6),
-            0xE3 => self.inst_bbs(io, 7),
+            0x03 => self.inst_bbs(0),
+            0x23 => self.inst_bbs(1),
+            0x43 => self.inst_bbs(2),
+            0x63 => self.inst_bbs(3),
+            0x83 => self.inst_bbs(4),
+            0xA3 => self.inst_bbs(5),
+            0xC3 => self.inst_bbs(6),
+            0xE3 => self.inst_bbs(7),
 
-            0x13 => self.inst_bbc(io, 0),
-            0x33 => self.inst_bbc(io, 1),
-            0x53 => self.inst_bbc(io, 2),
-            0x73 => self.inst_bbc(io, 3),
-            0x93 => self.inst_bbc(io, 4),
-            0xB3 => self.inst_bbc(io, 5),
-            0xD3 => self.inst_bbc(io, 6),
-            0xF3 => self.inst_bbc(io, 7),
+            0x13 => self.inst_bbc(0),
+            0x33 => self.inst_bbc(1),
+            0x53 => self.inst_bbc(2),
+            0x73 => self.inst_bbc(3),
+            0x93 => self.inst_bbc(4),
+            0xB3 => self.inst_bbc(5),
+            0xD3 => self.inst_bbc(6),
+            0xF3 => self.inst_bbc(7),
 
-            0x2E => self.inst_cbne(io, AddressingMode::Absolute8),
-            0xDE => self.inst_cbne(io, AddressingMode::Absolute8X),
-            0xFE => self.inst_dbnz(io, Operand::Y),
-            0x6E => self.inst_dbnz(io, AddressingMode::Absolute8),
-            0x2F => self.inst_bra(io, true),
-            0x5F => self.inst_jmp(io, AddressingMode::Absolute16),
-            0x1F => self.inst_jmp2(io, AddressingMode::Absolute16X),
-            0x3F => self.inst_call(io),
+            0x2E => self.inst_cbne(AddressingMode::Absolute8),
+            0xDE => self.inst_cbne(AddressingMode::Absolute8X),
+            0xFE => self.inst_dbnz(Operand::Y),
+            0x6E => self.inst_dbnz(AddressingMode::Absolute8),
+            0x2F => self.inst_bra(true),
+            0x5F => self.inst_jmp(AddressingMode::Absolute16),
+            0x1F => self.inst_jmp2(AddressingMode::Absolute16X),
+            0x3F => self.inst_call(),
 
-            0x01 => self.inst_tcall(io, 0x0),
-            0x11 => self.inst_tcall(io, 0x1),
-            0x21 => self.inst_tcall(io, 0x2),
-            0x31 => self.inst_tcall(io, 0x3),
-            0x41 => self.inst_tcall(io, 0x4),
-            0x51 => self.inst_tcall(io, 0x5),
-            0x61 => self.inst_tcall(io, 0x6),
-            0x71 => self.inst_tcall(io, 0x7),
-            0x81 => self.inst_tcall(io, 0x8),
-            0x91 => self.inst_tcall(io, 0x9),
-            0xA1 => self.inst_tcall(io, 0xA),
-            0xB1 => self.inst_tcall(io, 0xB),
-            0xC1 => self.inst_tcall(io, 0xC),
-            0xD1 => self.inst_tcall(io, 0xD),
-            0xE1 => self.inst_tcall(io, 0xE),
-            0xF1 => self.inst_tcall(io, 0xF),
+            0x01 => self.inst_tcall(0x0),
+            0x11 => self.inst_tcall(0x1),
+            0x21 => self.inst_tcall(0x2),
+            0x31 => self.inst_tcall(0x3),
+            0x41 => self.inst_tcall(0x4),
+            0x51 => self.inst_tcall(0x5),
+            0x61 => self.inst_tcall(0x6),
+            0x71 => self.inst_tcall(0x7),
+            0x81 => self.inst_tcall(0x8),
+            0x91 => self.inst_tcall(0x9),
+            0xA1 => self.inst_tcall(0xA),
+            0xB1 => self.inst_tcall(0xB),
+            0xC1 => self.inst_tcall(0xC),
+            0xD1 => self.inst_tcall(0xD),
+            0xE1 => self.inst_tcall(0xE),
+            0xF1 => self.inst_tcall(0xF),
 
-            0x4F => self.inst_pcall(io),
-            0x6F => self.inst_ret(io),
-            0x7F => self.inst_ret1(io),
-            0x0F => self.inst_brk(io),
+            0x4F => self.inst_pcall(),
+            0x6F => self.inst_ret(),
+            0x7F => self.inst_ret1(),
+            0x0F => self.inst_brk(),
 
             0x00 => (), // nop
             0xEF => self.stopped = true, // sleep
@@ -1364,10 +1329,10 @@ pub mod disasm {
         }
     }
 
-    pub fn disasm(pc: u16, io: &ApuIo) -> Instruction {
-        let opcode = io.read_pure(pc);
-        let b1 = io.read_pure(pc.wrapping_add(1));
-        let b2 = io.read_pure(pc.wrapping_add(2));
+    pub fn disasm(pc: u16, apu: &Apu) -> Instruction {
+        let opcode = apu.read_pure(pc);
+        let b1 = apu.read_pure(pc.wrapping_add(1));
+        let b2 = apu.read_pure(pc.wrapping_add(2));
         let w = (b2 as u16) << 8 | b1 as u16;
 
         let rel8 =

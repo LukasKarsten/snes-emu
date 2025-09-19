@@ -668,7 +668,7 @@ fn int_reset(emu: &mut Snes) {
 
     emu.cpu.reset();
     emu.ppu.reset();
-    emu.apu_io.reset();
+    emu.apu.reset();
 }
 
 fn int_break(emu: &mut Snes) {

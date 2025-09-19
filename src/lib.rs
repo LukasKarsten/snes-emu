@@ -1,7 +1,7 @@
 use cpu::StepResult;
 use input::InputDevice;
 
-pub use apu::{Apu, ApuIo};
+pub use apu::Apu;
 pub use cpu::Cpu;
 pub use dma::Dma;
 pub use joypad::JoypadIo;
@@ -45,7 +45,6 @@ pub struct Snes {
     wram: WRam,
     sram: Box<[u8; 0x080000]>,
     rom: Box<[u8]>,
-    pub apu_io: ApuIo,
     joypad: JoypadIo,
     pub dma: Dma,
     mdr: u8,
@@ -61,7 +60,6 @@ impl Snes {
             wram: WRam::default(),
             sram: vec![0; 0x080000].try_into().unwrap(),
             rom,
-            apu_io: ApuIo::default(),
             joypad: JoypadIo::default(),
             dma: Dma::default(),
             mdr: 0,
@@ -79,7 +77,7 @@ impl Snes {
     }
 
     pub fn add_cycles(&mut self, n: u64) -> bool {
-        self.apu.step(&mut self.apu_io);
+        self.apu.step();
         ppu::Ppu::step(self, n)
     }
 
@@ -236,7 +234,7 @@ impl Snes {
         match device {
             BusDevice::WRam => Some(self.wram.data[device_addr as usize]),
             BusDevice::Ppu => self.ppu.read_pure(device_addr),
-            BusDevice::Apu => self.apu_io.cpu_read_pure(device_addr as u16),
+            BusDevice::Apu => self.apu.cpu_read_pure(device_addr as u16),
             BusDevice::WRamAccess => self.wram.read_pure(device_addr),
             BusDevice::Joypad => self.joypad.read_pure(device_addr),
             BusDevice::CpuIo => self.cpu.read_pure(device_addr),
@@ -266,7 +264,7 @@ impl Snes {
                 self.mdr
             }),
             BusDevice::Apu => self
-                .apu_io
+                .apu
                 .cpu_read(device_addr as u16)
                 .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (APU)")),
             BusDevice::WRamAccess => self
@@ -312,7 +310,7 @@ impl Snes {
         match device {
             BusDevice::WRam => self.wram.data[device_addr as usize] = value,
             BusDevice::Ppu => self.ppu.write(device_addr, value),
-            BusDevice::Apu => self.apu_io.cpu_write(device_addr as u16, value),
+            BusDevice::Apu => self.apu.cpu_write(device_addr as u16, value),
             BusDevice::WRamAccess => self.wram.write(device_addr, value),
             BusDevice::Joypad => self.joypad.write(device_addr, value),
             BusDevice::CpuIo => self.cpu.write(device_addr, value),

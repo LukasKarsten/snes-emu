@@ -60,18 +60,18 @@ impl super::Tab for ApuTab {
                     });
                 }
 
-                show_cpuio_ports(ui, "CPU -> APU", &mut snes.apu_io.cpuio_in);
-                show_cpuio_ports(ui, "APU -> CPU", &mut snes.apu_io.cpuio_out);
+                show_cpuio_ports(ui, "CPU -> APU", &mut snes.apu.cpuio_in);
+                show_cpuio_ports(ui, "APU -> CPU", &mut snes.apu.cpuio_out);
             });
 
-            ui.checkbox(&mut snes.apu_io.rom_enable, "ROM");
+            ui.checkbox(&mut snes.apu.rom_enable, "ROM");
 
             ui.vertical(|ui| {
                 egui::Grid::new("cpu-disasm").striped(true).show(ui, |ui| {
                     let mut off = 0;
                     for _ in 0..10 {
                         let pc = snes.apu.pc.wrapping_add(off);
-                        let instruction = snes_emu::apu::disasm::disasm(pc, &snes.apu_io);
+                        let instruction = snes_emu::apu::disasm::disasm(pc, &snes.apu);
                         off += instruction.len() as u16;
                         ui.monospace(format!("{pc:06X}:"));
                         ui.monospace(instruction.to_string());
@@ -104,7 +104,7 @@ impl super::Tab for ApuRamTab {
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
         self.memory_editor.draw_editor_contents(
             ui,
-            &mut emulation_state.snes.apu_io,
+            &mut emulation_state.snes.apu,
             |apuio, addr| Some(apuio.read_pure(addr as u16)),
             |apuio, addr, value| apuio.write(addr as u16, value),
         );
