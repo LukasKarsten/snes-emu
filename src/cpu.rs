@@ -1689,7 +1689,8 @@ impl Cpu {
                 | super::dma::TransferUnitSelect::WO4Bytes2Regs => {
                     self.dma_counter ^= 2;
                 }
-                super::dma::TransferUnitSelect::WT4Bytes2Regs => {
+                super::dma::TransferUnitSelect::WT4Bytes2Regs
+                | super::dma::TransferUnitSelect::WT4Bytes2RegsAgain => {
                     self.dma_counter = (self.dma_counter + 1) & 0x03;
                 }
                 super::dma::TransferUnitSelect::WO4Bytes4Regs => {
