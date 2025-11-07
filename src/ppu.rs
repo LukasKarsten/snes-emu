@@ -1021,7 +1021,7 @@ impl Ppu {
         ];
 
         if io.screens.math_operation == MathOperation::Sub {
-            output.map(std::ops::Neg::neg);
+            output = output.map(std::ops::Neg::neg);
         }
 
         output[0] += main_color.r.value() as i8;
