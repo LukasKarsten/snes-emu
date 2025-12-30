@@ -2,7 +2,7 @@ use std::fmt::{self, Write};
 
 use arbitrary_int::*;
 
-use crate::{ppu, Snes};
+use crate::{apu, ppu, Snes};
 
 #[repr(transparent)]
 #[derive(Default, Clone, Copy)]
@@ -692,10 +692,12 @@ pub fn read(emu: &mut Snes, addr: u32) -> u8 {
                 emu.mdr
             })
         }
-        BusDevice::Apu => emu
-            .apu
-            .cpu_read(device_addr as u16)
-            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (APU)")),
+        BusDevice::Apu => {
+            apu::catch_up(emu);
+            emu.apu
+                .cpu_read(device_addr as u16)
+                .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (APU)"))
+        }
         BusDevice::WRamAccess => emu
             .wram
             .read(device_addr)
@@ -742,7 +744,10 @@ pub fn write(emu: &mut Snes, addr: u32, value: u8) {
             ppu::catch_up(emu);
             emu.ppu.write(device_addr, value)
         }
-        BusDevice::Apu => emu.apu.cpu_write(device_addr as u16, value),
+        BusDevice::Apu => {
+            apu::catch_up(emu);
+            emu.apu.cpu_write(device_addr as u16, value)
+        }
         BusDevice::WRamAccess => emu.wram.write(device_addr, value),
         BusDevice::Joypad => emu.joypad.write(device_addr, value),
         BusDevice::CpuIo => emu.cpu.write(device_addr, value),
@@ -2400,6 +2405,7 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
     if result == StepResult::FrameFinished {
         // Make sure everything's synchronized
         ppu::catch_up(emu);
+        apu::catch_up(emu);
         assert_eq!(emu.cpu.hv_counter_cycles, emu.ppu.cycles);
         assert_eq!(emu.cpu.h_counter, emu.ppu.hpos);
         assert_eq!(emu.cpu.v_counter, emu.ppu.vpos);

@@ -1,5 +1,7 @@
 use std::fmt::{self, Write};
 
+use crate::Snes;
+
 #[rustfmt::skip]
 static BOOT_ROM: [u8; 64] = [
     /* FFC0 */ 0xCD, 0xEF, 0xBD, 0xE8, 0x00, 0xC6, 0x1D, 0xD0,
@@ -886,7 +888,7 @@ impl Apu {
     }
 
     #[rustfmt::skip]
-    pub fn step(&mut self) {
+    fn step(&mut self) {
         if self.reset {
             self.rom_enable = true;
             self.cpuio_in.fill(0);
@@ -900,6 +902,8 @@ impl Apu {
         if self.stopped {
             return;
         }
+
+        self.cycles += 24;
 
         let opcode = self.next_instr_byte();
 
@@ -1190,6 +1194,14 @@ impl Apu {
 
             //_ => panic!("apu encountered an unimplemented instruction: {opcode:02X}"),
         }
+    }
+}
+
+pub fn catch_up(emu: &mut Snes) {
+    // TODO: The APU has a separate clock which runs a little faster, but this should suffice for
+    // now
+    while emu.apu.cycles < emu.cpu.cycles() {
+        emu.apu.step();
     }
 }
 

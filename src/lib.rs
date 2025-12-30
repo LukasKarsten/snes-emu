@@ -107,7 +107,6 @@ impl Snes {
 
         loop {
             let result = cpu::step(self, ignore_breakpoints);
-            self.apu.step();
             ignore_breakpoints = false;
 
             match result {
@@ -121,7 +120,7 @@ impl Snes {
     pub fn step(&mut self) -> StepResult {
         let result = cpu::step(self, true);
         ppu::catch_up(self);
-        self.apu.step();
+        apu::catch_up(self);
         result
     }
 }
