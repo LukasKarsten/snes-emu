@@ -8,7 +8,7 @@ use std::{
 use debugger::Debugger;
 use game_view::GameView;
 use render::Renderer;
-use snes_emu::{MappingMode, Snes};
+use snes_emu::{cpu::MappingMode, Snes};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use winit::{
     application::ApplicationHandler,
@@ -113,7 +113,7 @@ impl ApplicationHandler for App {
 
             let output_image = emu_state.snes.ppu.output();
 
-            emu_state.current_image_height = emu_state.snes.bus.ppu.output_height();
+            emu_state.current_image_height = emu_state.snes.ppu.output_height();
             {
                 let mut current_image = emu_state.current_image.lock().unwrap();
                 *current_image = output_image.clone();

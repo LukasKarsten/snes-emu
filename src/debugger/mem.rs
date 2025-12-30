@@ -1,5 +1,6 @@
 use egui::Ui;
 use egui_memory_editor::MemoryEditor;
+use snes_emu::cpu;
 
 use crate::EmulationState;
 
@@ -32,17 +33,17 @@ impl Tab for BusTab {
             ui,
             "mapping-mode",
             "Mapping Mode",
-            &mut emulation_state.snes.bus.mapping_mode,
-            snes_emu::MappingMode::LoRom => "LoROM",
-            snes_emu::MappingMode::HiRom => "HiROM",
-            snes_emu::MappingMode::ExHiRom => "ExHiROM",
+            &mut emulation_state.snes.cpu.mapping_mode,
+            cpu::MappingMode::LoRom => "LoROM",
+            cpu::MappingMode::HiRom => "HiROM",
+            cpu::MappingMode::ExHiRom => "ExHiROM",
         );
 
         self.memory_editor.draw_editor_contents(
             ui,
-            &mut emulation_state.snes.bus,
-            |bus, addr| bus.read_pure(addr as u32),
-            |bus, addr, value| bus.write(addr as u32, value),
+            &mut emulation_state.snes,
+            |emu, addr| cpu::read_pure(emu, addr as u32),
+            |emu, addr, value| cpu::write(emu, addr as u32, value),
         );
     }
 }

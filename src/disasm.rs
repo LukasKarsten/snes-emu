@@ -1,6 +1,6 @@
 use std::fmt::{self, Write};
 
-use crate::{cpu::Cpu, Bus};
+use crate::{cpu, Snes};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Param {
@@ -138,23 +138,23 @@ impl fmt::Display for Instruction {
     }
 }
 
-pub fn disassemble(cpu: &Cpu, bus: &Bus, instructions: &mut [Instruction]) {
-    let mut pc = cpu.regs.pc.get();
-    let k = (cpu.regs.k as u32) << 16;
+pub fn disassemble(emu: &Snes, instructions: &mut [Instruction]) {
+    let mut pc = emu.cpu.regs.pc.get();
+    let k = (emu.cpu.regs.k as u32) << 16;
 
     for instruction in instructions.iter_mut() {
         let addr = k | pc as u32;
 
-        let op = bus.read_pure(k | pc as u32).unwrap_or(bus.mdr());
-        let b1 = bus.read_pure(k | pc.wrapping_add(1) as u32).unwrap_or(op);
-        let b2 = bus.read_pure(k | pc.wrapping_add(2) as u32).unwrap_or(b1);
-        let b3 = bus.read_pure(k | pc.wrapping_add(3) as u32).unwrap_or(b2);
+        let op = cpu::read_pure(emu, k | pc as u32).unwrap_or(emu.cpu.mdr());
+        let b1 = cpu::read_pure(emu, k | pc.wrapping_add(1) as u32).unwrap_or(op);
+        let b2 = cpu::read_pure(emu, k | pc.wrapping_add(2) as u32).unwrap_or(b1);
+        let b3 = cpu::read_pure(emu, k | pc.wrapping_add(3) as u32).unwrap_or(b2);
 
         let p8 = b1;
         let p16 = (b1 as u16) | (b2 as u16) << 8;
 
         let imm_m = || {
-            if cpu.regs.p.m {
+            if emu.cpu.regs.p.m {
                 Param::Immediate8(p8)
             } else {
                 Param::Immediate16(p16)
@@ -162,7 +162,7 @@ pub fn disassemble(cpu: &Cpu, bus: &Bus, instructions: &mut [Instruction]) {
         };
 
         let imm_x = || {
-            if cpu.regs.p.xb {
+            if emu.cpu.regs.p.xb {
                 Param::Immediate8(p8)
             } else {
                 Param::Immediate16(p16)

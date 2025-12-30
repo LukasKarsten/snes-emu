@@ -24,7 +24,7 @@ impl super::Tab for DmaTab {
 
             ui.label(format!("Channel {idx}"));
 
-            let channel = &mut snes.bus.dma.channels[idx];
+            let channel = &mut snes.dma.channels[idx];
 
             let mut dmap = channel.dmap;
 
@@ -96,7 +96,7 @@ impl super::Tab for DmaTab {
             show_reg_u8(ui, &mut channel.ntrl);
             show_reg_u8(ui, &mut channel.unused);
 
-            let hdmaen = &mut snes.bus.cpu.hdmaen;
+            let hdmaen = &mut snes.cpu.hdmaen;
             let mut enabled = (*hdmaen >> idx) & 1 == 1;
             ui.checkbox(&mut enabled, "");
             *hdmaen = *hdmaen & !(1 << idx) | (enabled as u8) << idx;

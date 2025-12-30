@@ -2,9 +2,9 @@ use egui::{Id, Ui};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 pub use apu::{ApuRamTab, ApuTab};
-pub use bus::BusTab;
 pub use cpu::CpuTab;
 pub use dma::DmaTab;
+pub use mem::BusTab;
 pub use ppu::{
     PpuBackgroundsTab, PpuCgRamTab, PpuMiscTab, PpuOamTab, PpuObjectsTab, PpuScreensTab,
     PpuSpritesTab, PpuVRamTab, PpuWindowsTab,
@@ -44,9 +44,9 @@ macro_rules! enum_combobox {
 use enum_combobox;
 
 mod apu;
-mod bus;
 mod cpu;
 mod dma;
+mod mem;
 mod ppu;
 
 struct TabWithId {
