@@ -2,7 +2,7 @@ use std::fmt::{self, Write};
 
 use arbitrary_int::*;
 
-use crate::Snes;
+use crate::{ppu, Snes};
 
 #[repr(transparent)]
 #[derive(Default, Clone, Copy)]
@@ -228,6 +228,26 @@ impl Pointer {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MappingMode {
+    LoRom,
+    HiRom,
+    ExHiRom,
+}
+
+#[derive(Debug)]
+pub enum BusDevice {
+    WRam,
+    SRam,
+    Rom,
+    CpuIo,
+    Ppu,
+    Apu,
+    WRamAccess,
+    Dma,
+    Joypad,
+}
+
 // NOTE: When multiple interrupts are raised at the same time, they are handled in the same order
 // as they are defined here.
 // TODO: Is that even correct?
@@ -261,6 +281,7 @@ pub enum HvIrq {
 pub enum StepResult {
     Stepped,
     BreakpointHit,
+    FrameFinished,
 }
 
 pub struct CpuDebug {
@@ -328,11 +349,17 @@ pub struct Cpu {
     dma_counter: u8,
     stopped: bool,
     waiting: bool,
+    h_counter: u16,
+    v_counter: u16,
+    hv_counter_cycles: u64,
+    cycles: u64,
+    pub mapping_mode: MappingMode,
+    mdr: u8,
     pub debug: CpuDebug,
 }
 
-impl Default for Cpu {
-    fn default() -> Self {
+impl Cpu {
+    pub fn new(mapping_mode: MappingMode) -> Self {
         Self {
             nmitimen_vblank_nmi_enable: false,
             nmitimen_hv_irq: HvIrq::Disable,
@@ -374,12 +401,16 @@ impl Default for Cpu {
             dma_counter: 0,
             stopped: false,
             waiting: false,
+            h_counter: 0,
+            v_counter: 0,
+            hv_counter_cycles: 0,
+            cycles: 0, // will overflow after about 27 millennia
+            mapping_mode,
+            mdr: 0,
             debug: CpuDebug::default(),
         }
     }
-}
 
-impl Cpu {
     pub fn raise_interrupt(&mut self, interrupt: Interrupt) {
         self.pending_interrupts |= 1 << interrupt as u8;
     }
@@ -544,16 +575,192 @@ impl Cpu {
             _ => (),
         }
     }
+
+    pub fn cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    pub fn mdr(&self) -> u8 {
+        self.mdr
+    }
+}
+
+fn resolve_cartridge_addr(addr: u32, mapping_mode: MappingMode) -> Option<(BusDevice, u32)> {
+    let bank = (addr >> 16) as u8;
+    let offset = addr as u16;
+
+    match mapping_mode {
+        MappingMode::LoRom => {
+            let mapped_addr = (addr & 0x7F0000) >> 1 | (addr & 0x007FFF);
+            if offset >= 0x8000 {
+                Some((BusDevice::Rom, mapped_addr))
+            } else if (bank & 0x7F) >= 0x70 {
+                Some((BusDevice::SRam, mapped_addr - 0x38_0000))
+            } else if (bank & 0x7F) >= 0x40 {
+                Some((BusDevice::Rom, mapped_addr))
+            } else {
+                None
+            }
+        }
+        MappingMode::HiRom => {
+            if ((addr >> 16) & 0x7F) >= 0x40 || offset >= 0x8000 {
+                Some((BusDevice::Rom, addr & 0x3FFFFF))
+            } else if offset >= 0x6000 {
+                let mapped_addr = (offset as u32 - 0x6000) | ((bank as u32) & 0xF) << 14;
+                Some((BusDevice::SRam, mapped_addr))
+            } else {
+                None
+            }
+        }
+        _ => todo!(),
+    }
+}
+
+fn resolve_addr(addr: u32, mapping_mode: MappingMode) -> Option<(BusDevice, u32)> {
+    let mut bank = (addr >> 16) as u8;
+    let offset = addr as u16;
+
+    if bank >= 0x7E && bank <= 0x7F {
+        return Some((BusDevice::WRam, addr - 0x7E_0000));
+    }
+
+    bank &= 0x7F;
+
+    if bank < 0x40 {
+        return match offset {
+            0x0000..=0x1FFF => Some((BusDevice::WRam, offset as u32)),
+            0x2000..=0x20FF => None,
+            0x2100..=0x213F => Some((BusDevice::Ppu, offset as u32)),
+            0x2140..=0x217F => Some((BusDevice::Apu, (offset & 0xFFC3) as u32)),
+            0x2180..=0x2183 => Some((BusDevice::WRamAccess, offset as u32)),
+            0x2184..=0x21FF => None, // Open Bus / Expansion (B-Bus)
+            0x2200..=0x3FFF => None, // Open Bus / Expansion (A-Bus)
+            0x4000..=0x4015 => None,
+            0x4016..=0x4017 => Some((BusDevice::Joypad, offset as u32)),
+            0x4018..=0x41FF => None,
+            0x4200..=0x420D => Some((BusDevice::CpuIo, offset as u32)),
+            0x420E..=0x420F => None,
+            0x4210..=0x421F => Some((BusDevice::CpuIo, offset as u32)),
+            0x4220..=0x42FF => None,
+            0x4300..=0x437F => Some((BusDevice::Dma, offset as u32)),
+            0x4380..=0x5FFF => None,
+            0x6000..=0xFFFF => resolve_cartridge_addr(addr, mapping_mode),
+        };
+    }
+
+    resolve_cartridge_addr(addr, mapping_mode)
+}
+
+pub fn read_pure(emu: &Snes, addr: u32) -> Option<u8> {
+    let (device, device_addr) = resolve_addr(addr, emu.cpu.mapping_mode)?;
+
+    match device {
+        BusDevice::WRam => Some(emu.wram.data[device_addr as usize]),
+        BusDevice::Ppu => emu.ppu.read_pure(device_addr),
+        BusDevice::Apu => emu.apu.cpu_read_pure(device_addr as u16),
+        BusDevice::WRamAccess => emu.wram.read_pure(device_addr),
+        BusDevice::Joypad => emu.joypad.read_pure(device_addr),
+        BusDevice::CpuIo => emu.cpu.read_pure(device_addr),
+        BusDevice::Dma => emu.dma.read_pure(device_addr),
+        BusDevice::Rom => {
+            // TODO: Implement correct wrapping behavior
+            let wrapped = (device_addr as usize) & !0 >> (emu.rom.len() - 1).leading_zeros();
+            Some(emu.rom.get(wrapped).copied().unwrap_or(0))
+        }
+        BusDevice::SRam => Some(emu.sram[device_addr as usize]),
+    }
+}
+
+pub fn read(emu: &mut Snes, addr: u32) -> u8 {
+    let Some((device, device_addr)) = resolve_addr(addr, emu.cpu.mapping_mode) else {
+        panic!("Open Bus Read on address {addr:06X}");
+        //return self.mdr;
+    };
+
+    // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
+    emu.cpu.cycles += 6;
+
+    let value = match device {
+        BusDevice::WRam => emu.wram.data[device_addr as usize],
+        BusDevice::Ppu => {
+            ppu::catch_up(emu);
+            emu.ppu.read(addr).unwrap_or_else(|| {
+                // 0x2137 is SLHV which when read has no value but side effects
+                if addr != 0x2137 {
+                    panic!("Open Bus Read on address {addr:06X} (PPU)");
+                }
+                emu.mdr
+            })
+        }
+        BusDevice::Apu => emu
+            .apu
+            .cpu_read(device_addr as u16)
+            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (APU)")),
+        BusDevice::WRamAccess => emu
+            .wram
+            .read(device_addr)
+            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (WRAM Access)")),
+        BusDevice::Joypad => emu
+            .joypad
+            .read(device_addr)
+            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (JOYPAD)")),
+        BusDevice::CpuIo => emu
+            .cpu
+            .read(device_addr)
+            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (CPUIO)")),
+        BusDevice::Dma => emu
+            .dma
+            .read(device_addr)
+            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (DMA)")),
+        BusDevice::Rom => {
+            let wrapped = (device_addr as usize) & !0 >> (emu.rom.len() - 1).leading_zeros();
+            emu.rom.get(wrapped).copied().unwrap_or(0)
+        }
+        BusDevice::SRam => emu.sram[device_addr as usize],
+    };
+
+    emu.cpu.mdr = value;
+
+    value
+}
+
+pub fn write(emu: &mut Snes, addr: u32, value: u8) {
+    emu.cpu.mdr = value;
+
+    let Some((device, device_addr)) = resolve_addr(addr, emu.cpu.mapping_mode) else {
+        panic!("Open Bus Write on address {addr:06X}");
+        //return;
+    };
+
+    // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
+    // TODO: Should we increment the `cycles` counter before or after reading?
+    emu.cpu.cycles += 6;
+
+    match device {
+        BusDevice::WRam => emu.wram.data[device_addr as usize] = value,
+        BusDevice::Ppu => {
+            ppu::catch_up(emu);
+            emu.ppu.write(device_addr, value)
+        }
+        BusDevice::Apu => emu.apu.cpu_write(device_addr as u16, value),
+        BusDevice::WRamAccess => emu.wram.write(device_addr, value),
+        BusDevice::Joypad => emu.joypad.write(device_addr, value),
+        BusDevice::CpuIo => emu.cpu.write(device_addr, value),
+        BusDevice::Dma => emu.dma.write(device_addr, value),
+        BusDevice::Rom => (),
+        BusDevice::SRam => emu.sram[device_addr as usize] = value,
+    }
 }
 
 fn next_instr_byte(emu: &mut Snes) -> u8 {
     let pc = emu.cpu.regs.pc.get();
     emu.cpu.regs.pc.set(pc.wrapping_add(1));
-    emu.read((emu.cpu.regs.k as u32) << 16 | pc as u32)
+    read(emu, (emu.cpu.regs.k as u32) << 16 | pc as u32)
 }
 
 fn skip_instr_byte(emu: &mut Snes) {
     emu.cpu.regs.pc.set(emu.cpu.regs.pc.get().wrapping_add(1));
+    emu.cpu.cycles += 6;
 }
 
 fn read_operand(emu: &mut Snes, mode: AddressingMode) -> Operand {
@@ -570,7 +777,7 @@ fn get_operand_u8(emu: &mut Snes, operand: Operand) -> u8 {
         Operand::A => emu.cpu.regs.a.getl(),
         Operand::X => emu.cpu.regs.x.getl(),
         Operand::Y => emu.cpu.regs.y.getl(),
-        Operand::Memory(pointer) => emu.read(pointer.low),
+        Operand::Memory(pointer) => read(emu, pointer.low),
     }
 }
 
@@ -580,8 +787,8 @@ fn get_operand_u16(emu: &mut Snes, operand: Operand) -> u16 {
         Operand::X => emu.cpu.regs.x.get(),
         Operand::Y => emu.cpu.regs.y.get(),
         Operand::Memory(pointer) => {
-            let ll = emu.read(pointer.low) as u16;
-            let hh = emu.read(pointer.high) as u16;
+            let ll = read(emu, pointer.low) as u16;
+            let hh = read(emu, pointer.high) as u16;
             hh << 8 | ll
         }
     }
@@ -592,7 +799,7 @@ fn set_operand_u8(emu: &mut Snes, operand: Operand, value: u8) {
         Operand::A => emu.cpu.regs.a.setl(value),
         Operand::X => emu.cpu.regs.x.setl(value),
         Operand::Y => emu.cpu.regs.y.setl(value),
-        Operand::Memory(pointer) => emu.write(pointer.low, value),
+        Operand::Memory(pointer) => write(emu, pointer.low, value),
     }
 }
 
@@ -602,14 +809,14 @@ fn set_operand_u16(emu: &mut Snes, operand: Operand, value: u16) {
         Operand::X => emu.cpu.regs.x.set(value),
         Operand::Y => emu.cpu.regs.y.set(value),
         Operand::Memory(pointer) => {
-            emu.write(pointer.low, value as u8);
-            emu.write(pointer.high, (value >> 8) as u8);
+            write(emu, pointer.low, value as u8);
+            write(emu, pointer.high, (value >> 8) as u8);
         }
     }
 }
 
 fn push8old(emu: &mut Snes, value: u8) {
-    emu.write(emu.cpu.regs.s.get().into(), value);
+    write(emu, emu.cpu.regs.s.get().into(), value);
     if emu.cpu.regs.p.e {
         emu.cpu.regs.s.setl(emu.cpu.regs.s.getl().wrapping_sub(1))
     } else {
@@ -618,7 +825,7 @@ fn push8old(emu: &mut Snes, value: u8) {
 }
 
 fn push8new(emu: &mut Snes, value: u8) {
-    emu.write(emu.cpu.regs.s.get().into(), value);
+    write(emu, emu.cpu.regs.s.get().into(), value);
     emu.cpu.regs.s.set(emu.cpu.regs.s.get().wrapping_sub(1));
 }
 
@@ -638,12 +845,12 @@ fn pull8old(emu: &mut Snes) -> u8 {
     } else {
         emu.cpu.regs.s.set(emu.cpu.regs.s.get().wrapping_add(1));
     }
-    emu.read(emu.cpu.regs.s.get().into())
+    read(emu, emu.cpu.regs.s.get().into())
 }
 
 fn pull8new(emu: &mut Snes) -> u8 {
     emu.cpu.regs.s.set(emu.cpu.regs.s.get().wrapping_add(1));
-    emu.read(emu.cpu.regs.s.get().into())
+    read(emu, emu.cpu.regs.s.get().into())
 }
 
 fn pull16old(emu: &mut Snes) -> u16 {
@@ -719,8 +926,8 @@ fn enter_interrupt_handler(emu: &mut Snes, interrupt: Interrupt) {
         }
     };
 
-    let target_ll = emu.read(vector_addr);
-    let target_hh = emu.read(vector_addr + 1);
+    let target_ll = read(emu, vector_addr);
+    let target_hh = read(emu, vector_addr + 1);
     let target = (target_hh as u16) << 8 | target_ll as u16;
     emu.cpu.regs.pc.set(target);
     emu.cpu.regs.k = 0;
@@ -755,8 +962,8 @@ fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
             let pointer_lo = pointer_hh << 8 | pointer_ll;
             let pointer_hi = pointer_lo.wrapping_add(1);
 
-            let data_ll = emu.read(pointer_lo as u32) as u16;
-            let data_hh = emu.read(pointer_hi as u32) as u16;
+            let data_ll = read(emu, pointer_lo as u32) as u16;
+            let data_hh = read(emu, pointer_hi as u32) as u16;
             Pointer::new16(emu.cpu.regs.k, data_hh << 8 | data_ll)
         }
         AddressingMode::AbsoluteBracketsJmp => {
@@ -767,9 +974,9 @@ fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
             let pointer_mid = pointer_lo.wrapping_add(1);
             let pointer_hi = pointer_lo.wrapping_add(2);
 
-            let data_ll = emu.read(pointer_lo as u32) as u16;
-            let data_mm = emu.read(pointer_mid as u32) as u16;
-            let data_hh = emu.read(pointer_hi as u32);
+            let data_ll = read(emu, pointer_lo as u32) as u16;
+            let data_mm = read(emu, pointer_mid as u32) as u16;
+            let data_hh = read(emu, pointer_hi as u32);
             Pointer::new16(data_hh, data_mm << 8 | data_ll)
         }
         AddressingMode::AbsoluteXParensJmp => {
@@ -782,8 +989,8 @@ fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
             let pointer_lo = k << 16 | partial_pointer as u32;
             let pointer_hi = k << 16 | partial_pointer.wrapping_add(1) as u32;
 
-            let data_lo = emu.read(pointer_lo) as u16;
-            let data_hi = emu.read(pointer_hi) as u16;
+            let data_lo = read(emu, pointer_lo) as u16;
+            let data_hi = read(emu, pointer_hi) as u16;
             Pointer::new16(emu.cpu.regs.k, data_hi << 8 | data_lo)
         }
         AddressingMode::DirectOld => {
@@ -828,24 +1035,24 @@ fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
         }
         AddressingMode::DirectParens => {
             let pointer = read_pointer(emu, AddressingMode::DirectOld);
-            let data_lo = emu.read(pointer.low) as u32;
-            let data_hi = emu.read(pointer.high) as u32;
+            let data_lo = read(emu, pointer.low) as u32;
+            let data_hi = read(emu, pointer.high) as u32;
             let dbr = emu.cpu.regs.dbr as u32;
             Pointer::new24(dbr << 16 | data_hi << 8 | data_lo)
         }
         AddressingMode::DirectBrackets => {
             let ll = next_instr_byte(emu);
             let addr = emu.cpu.regs.d.get().wrapping_add(ll as u16);
-            let data_lo = emu.read(addr as u32) as u32;
-            let data_mid = emu.read(addr.wrapping_add(1) as u32) as u32;
-            let data_hi = emu.read(addr.wrapping_add(2) as u32) as u32;
+            let data_lo = read(emu, addr as u32) as u32;
+            let data_mid = read(emu, addr.wrapping_add(1) as u32) as u32;
+            let data_hi = read(emu, addr.wrapping_add(2) as u32) as u32;
             Pointer::new24(data_hi << 16 | data_mid << 8 | data_lo)
         }
         AddressingMode::DirectXParens => {
             let target_lo = read_pointer(emu, AddressingMode::DirectX).low;
             let target_hi = (target_lo & 0xFFFFFF00) | (target_lo as u8).wrapping_add(1) as u32;
-            let data_lo = emu.read(target_lo) as u32;
-            let data_hi = emu.read(target_hi) as u32;
+            let data_lo = read(emu, target_lo) as u32;
+            let data_hi = read(emu, target_hi) as u32;
             let dbr = emu.cpu.regs.dbr as u32;
             Pointer::new24(dbr << 16 | data_hi << 8 | data_lo)
         }
@@ -906,8 +1113,8 @@ fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
         }
         AddressingMode::StackSYParens => {
             let pointer = read_pointer(emu, AddressingMode::StackS);
-            let data_ll = emu.read(pointer.low) as u32;
-            let data_hh = emu.read(pointer.high) as u32;
+            let data_ll = read(emu, pointer.low) as u32;
+            let data_hh = read(emu, pointer.high) as u32;
             let dbr = emu.cpu.regs.dbr as u32;
             let y = emu.cpu.regs.y.get();
             Pointer::new24(dbr << 16 | data_hh << 8 | data_ll).with_offset(y)
@@ -1459,8 +1666,8 @@ fn inst_mvn_mvp(emu: &mut Snes, step: i16) {
     let dst = (dst_bank as u32) << 16 | dst_offset as u32;
 
     emu.cpu.regs.dbr = dst_bank;
-    let value = emu.read(src);
-    emu.write(dst, value);
+    let value = read(emu, src);
+    write(emu, dst, value);
 
     let mut next_x = src_offset.wrapping_add_signed(step);
     let mut next_y = dst_offset.wrapping_add_signed(step);
@@ -1702,8 +1909,8 @@ fn process_dma(emu: &mut Snes) -> StepResult {
         }
 
         // FIXME: Differentiate between A & B bus
-        let byte = emu.read(src_addr);
-        emu.write(dst_addr, byte);
+        let byte = read(emu, src_addr);
+        write(emu, dst_addr, byte);
 
         channel = &mut emu.dma.channels[idx];
 
@@ -2141,5 +2348,62 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
         0xFB => inst_xce(emu),
     }
 
-    StepResult::Stepped
+    let height = emu.ppu.output_height();
+
+    let mut result = StepResult::Stepped;
+
+    while emu.cpu.hv_counter_cycles < emu.cpu.cycles {
+        emu.cpu.hv_counter_cycles += 4;
+
+        emu.cpu.h_counter += 1;
+        if emu.cpu.h_counter > 339 {
+            emu.cpu.h_counter = 0;
+            emu.cpu.v_counter += 1;
+
+            if emu.cpu.v_counter == 2 {
+                emu.cpu.set_vblank_nmi_flag(false);
+            } else if emu.cpu.v_counter == height + 1 {
+                emu.cpu.set_vblank_nmi_flag(true);
+            }
+
+            // TODO: This is not actually dependent on the height but rather whether the console is
+            // a NTSC or PAL console. (at least I think so ..)
+            if emu.cpu.v_counter > height + 37 {
+                emu.cpu.v_counter = 0;
+            }
+        }
+
+        // TODO: Trigger HDMA somewhere after this point probably idk
+
+        let hblank = emu.cpu.h_counter < 22 || emu.cpu.h_counter > 277;
+        let vblank = emu.cpu.v_counter < 1 || emu.cpu.v_counter > height;
+
+        emu.cpu.hvbjoy_hblank_period_flag = hblank;
+        emu.cpu.hvbjoy_vblank_period_flag = vblank;
+
+        let h_irq = emu.cpu.h_counter == emu.cpu.htime.value();
+        let v_irq = emu.cpu.v_counter == emu.cpu.vtime.value();
+
+        // PERF: We could eliminate this match with some bit fiddling
+        match emu.cpu.nmitimen_hv_irq {
+            HvIrq::Disable => (),
+            HvIrq::Horizontal => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq,
+            HvIrq::Vertical => emu.cpu.timeup_hv_count_timer_irq_flag = v_irq,
+            HvIrq::End => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq & v_irq,
+        }
+
+        if emu.cpu.h_counter == 277 && emu.cpu.v_counter == height {
+            result = StepResult::FrameFinished;
+        }
+    }
+
+    if result == StepResult::FrameFinished {
+        // Make sure everything's synchronized
+        ppu::catch_up(emu);
+        assert_eq!(emu.cpu.hv_counter_cycles, emu.ppu.cycles);
+        assert_eq!(emu.cpu.h_counter, emu.ppu.hpos);
+        assert_eq!(emu.cpu.v_counter, emu.ppu.vpos);
+    }
+
+    result
 }

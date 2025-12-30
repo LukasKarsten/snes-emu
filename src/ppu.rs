@@ -323,9 +323,9 @@ pub struct Ppu {
     ophct_selector: u8,
     opvct_selector: u8,
 
-    pending_cycles: u64,
-    pub hpos: u16,
-    pub vpos: u16,
+    pub(super) cycles: u64,
+    pub(super) hpos: u16,
+    pub(super) vpos: u16,
     output: OutputImage,
 }
 
@@ -386,7 +386,7 @@ impl Default for Ppu {
             ophct_selector: 0,
             opvct_selector: 0,
 
-            pending_cycles: 0,
+            cycles: 0,
             hpos: 0,
             vpos: 0,
             output: OutputImage::default(),
@@ -835,94 +835,6 @@ impl Ppu {
         &self.output
     }
 
-    pub fn step(emu: &mut Snes, cycles: u64) -> bool {
-        emu.ppu.pending_cycles += cycles;
-
-        /*
-        let width = match ppu.setini_hpseudo512 {
-            false => 256,
-            true => 512,
-        };
-
-        let height = match (ppu.setini_overscan, ppu.setini_interlace) {
-            (false, false) => 224,
-            (false, true) => 448,
-            (true, false) => 239,
-            (true, true) => 478,
-        };
-        */
-
-        let height = emu.ppu.output_height();
-
-        // TODO: This is not acutally dependent on the height but rather whether the console is a NTSC
-        // or PAL console. (at least I think so ..)
-        let screen_height = height;
-
-        if emu.ppu.setini_interlace {
-            todo!()
-        }
-        if emu.ppu.setini_hpseudo512 {
-            todo!()
-        }
-
-        while emu.ppu.pending_cycles >= 4 {
-            emu.ppu.pending_cycles -= 4;
-
-            emu.ppu.hpos += 1;
-            if emu.ppu.hpos > 339 {
-                emu.ppu.hpos = 0;
-                emu.ppu.vpos += 1;
-
-                if emu.ppu.vpos == 2 {
-                    emu.cpu.set_vblank_nmi_flag(false);
-                } else if emu.ppu.vpos == height + 1 {
-                    emu.cpu.set_vblank_nmi_flag(true);
-                }
-
-                if emu.ppu.vpos > screen_height + 37 {
-                    emu.ppu.vpos = 0;
-                }
-            }
-
-            let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos > 277;
-            let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos > height;
-
-            emu.cpu.hvbjoy_hblank_period_flag = hblank;
-            emu.cpu.hvbjoy_vblank_period_flag = vblank;
-
-            let h_irq = emu.ppu.hpos == emu.cpu.htime.value();
-            let v_irq = emu.ppu.vpos == emu.cpu.vtime.value();
-            // PERF: We could eliminate this match with some bit fiddling
-            match emu.cpu.nmitimen_hv_irq {
-                crate::cpu::HvIrq::Disable => (),
-                crate::cpu::HvIrq::Horizontal => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq,
-                crate::cpu::HvIrq::Vertical => emu.cpu.timeup_hv_count_timer_irq_flag = v_irq,
-                crate::cpu::HvIrq::End => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq & v_irq,
-            }
-
-            if !hblank && !vblank {
-                let x = emu.ppu.hpos - 22;
-                let y = emu.ppu.vpos - 1;
-
-                let color = match emu.ppu.inidisp_forced_blanking {
-                    false => emu.ppu.render_pixel(x, y),
-                    true => OutputColor::BLACK,
-                };
-
-                emu.ppu.output.set(x * 2 + 0, y * 2 + 0, color);
-                emu.ppu.output.set(x * 2 + 1, y * 2 + 0, color);
-                emu.ppu.output.set(x * 2 + 0, y * 2 + 1, color);
-                emu.ppu.output.set(x * 2 + 1, y * 2 + 1, color);
-            }
-
-            if emu.ppu.hpos == 277 && emu.ppu.vpos == height {
-                return true;
-            }
-        }
-
-        false
-    }
-
     fn render_pixel(&self, x: u16, y: u16) -> OutputColor {
         let mode = self.backgrounds.mode.value();
         if mode == 7 {
@@ -1079,7 +991,6 @@ impl Ppu {
         colors
     }
 
-    #[inline(never)]
     fn get_bg_color(&self, x: u16, y: u16, bg_num: usize, mode_def: &ModeDefinition) -> LayerColor {
         let bg = &self.backgrounds.backgrounds[bg_num];
 
@@ -1295,5 +1206,65 @@ impl Color {
 
     const fn new(r: u5, g: u5, b: u5) -> Self {
         Self { r, g, b }
+    }
+}
+
+pub fn catch_up(emu: &mut Snes) {
+    /*
+    let width = match ppu.setini_hpseudo512 {
+        false => 256,
+        true => 512,
+    };
+
+    let height = match (ppu.setini_overscan, ppu.setini_interlace) {
+        (false, false) => 224,
+        (false, true) => 448,
+        (true, false) => 239,
+        (true, true) => 478,
+    };
+    */
+
+    if emu.ppu.setini_interlace {
+        todo!()
+    }
+    if emu.ppu.setini_hpseudo512 {
+        todo!()
+    }
+
+    let height = emu.ppu.output_height();
+
+    while emu.ppu.cycles < emu.cpu.cycles() {
+        emu.ppu.cycles += 4;
+
+        emu.ppu.hpos += 1;
+        if emu.ppu.hpos > 339 {
+            emu.ppu.hpos = 0;
+            emu.ppu.vpos += 1;
+            if emu.ppu.vpos > height + 37 {
+                emu.ppu.vpos = 0;
+            }
+        }
+
+        let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos > 277;
+        let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos > height;
+
+        if !hblank && !vblank {
+            let x = emu.ppu.hpos - 22;
+            let y = emu.ppu.vpos - 1;
+
+            let color = match emu.ppu.inidisp_forced_blanking {
+                false => emu.ppu.render_pixel(x, y),
+                true => OutputColor::BLACK,
+            };
+
+            emu.ppu.output.set(x * 2 + 0, y * 2 + 0, color);
+            emu.ppu.output.set(x * 2 + 1, y * 2 + 0, color);
+            emu.ppu.output.set(x * 2 + 0, y * 2 + 1, color);
+            emu.ppu.output.set(x * 2 + 1, y * 2 + 1, color);
+        }
+
+        if emu.ppu.hpos == 277 && emu.ppu.vpos == height {
+            // TODO
+        }
     }
 }

@@ -8,7 +8,7 @@ use std::{
 use debugger::Debugger;
 use game_view::GameView;
 use render::Renderer;
-use snes_emu::{MappingMode, Snes};
+use snes_emu::{cpu::MappingMode, Snes};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use winit::{
     application::ApplicationHandler,

@@ -45,17 +45,6 @@ impl super::Tab for PpuMiscTab {
                     ui.checkbox(&mut ppu.setini_extbg, "External BG");
                     ui.checkbox(&mut ppu.setini_external_sync, "External Sync");
                 });
-
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        egui::DragValue::new(&mut ppu.hpos).ui(ui);
-                        ui.label("hpos");
-                    });
-                    ui.horizontal(|ui| {
-                        egui::DragValue::new(&mut ppu.vpos).ui(ui);
-                        ui.label("vpos");
-                    });
-                });
             });
         });
     }
