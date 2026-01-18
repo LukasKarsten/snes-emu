@@ -674,8 +674,7 @@ pub fn read_pure(emu: &Snes, addr: u32) -> Option<u8> {
 
 pub fn read(emu: &mut Snes, addr: u32) -> u8 {
     let Some((device, device_addr)) = resolve_addr(addr, emu.cpu.mapping_mode) else {
-        panic!("Open Bus Read on address {addr:06X}");
-        //return self.mdr;
+        return emu.cpu.mdr;
     };
 
     // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
@@ -684,45 +683,30 @@ pub fn read(emu: &mut Snes, addr: u32) -> u8 {
     run_timer(emu, StepResult::Stepped);
 
     let value = match device {
-        BusDevice::WRam => emu.wram.data[device_addr as usize],
+        BusDevice::WRam => Some(emu.wram.data[device_addr as usize]),
         BusDevice::Ppu => {
             ppu::catch_up(emu);
-            emu.ppu.read(device_addr).unwrap_or_else(|| {
+            emu.ppu.read(device_addr).or_else(|| {
                 // 0x2137 is SLHV which when read has no value but side effects
-                if addr != 0x2137 {
-                    panic!("Open Bus Read on address {addr:06X} (PPU)");
-                }
-                emu.mdr
+                (device_addr == 0x2137).then_some(emu.mdr)
             })
         }
         BusDevice::Apu => {
             apu::catch_up(emu);
-            emu.apu
-                .cpu_read(device_addr as u16)
-                .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (APU)"))
+            emu.apu.cpu_read(device_addr as u16)
         }
-        BusDevice::WRamAccess => emu
-            .wram
-            .read(device_addr)
-            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (WRAM Access)")),
-        BusDevice::Joypad => emu
-            .joypad
-            .read(device_addr)
-            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (JOYPAD)")),
-        BusDevice::CpuIo => emu
-            .cpu
-            .read(device_addr)
-            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (CPUIO)")),
-        BusDevice::Dma => emu
-            .dma
-            .read(device_addr)
-            .unwrap_or_else(|| panic!("Open Bus Read on address {addr:06X} (DMA)")),
+        BusDevice::WRamAccess => emu.wram.read(device_addr),
+        BusDevice::Joypad => emu.joypad.read(device_addr),
+        BusDevice::CpuIo => emu.cpu.read(device_addr),
+        BusDevice::Dma => emu.dma.read(device_addr),
         BusDevice::Rom => {
             let wrapped = (device_addr as usize) & !0 >> (emu.rom.len() - 1).leading_zeros();
-            emu.rom.get(wrapped).copied().unwrap_or(0)
+            Some(emu.rom.get(wrapped).copied().unwrap_or(0))
         }
-        BusDevice::SRam => emu.sram[device_addr as usize],
+        BusDevice::SRam => Some(emu.sram[device_addr as usize]),
     };
+
+    let value = value.unwrap_or(emu.cpu.mdr);
 
     emu.cpu.mdr = value;
 
@@ -733,8 +717,7 @@ pub fn write(emu: &mut Snes, addr: u32, value: u8) {
     emu.cpu.mdr = value;
 
     let Some((device, device_addr)) = resolve_addr(addr, emu.cpu.mapping_mode) else {
-        panic!("Open Bus Write on address {addr:06X}");
-        //return;
+        return;
     };
 
     // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
