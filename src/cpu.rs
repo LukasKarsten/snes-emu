@@ -687,7 +687,7 @@ pub fn read(emu: &mut Snes, addr: u32) -> u8 {
         BusDevice::WRam => emu.wram.data[device_addr as usize],
         BusDevice::Ppu => {
             ppu::catch_up(emu);
-            emu.ppu.read(addr).unwrap_or_else(|| {
+            emu.ppu.read(device_addr).unwrap_or_else(|| {
                 // 0x2137 is SLHV which when read has no value but side effects
                 if addr != 0x2137 {
                     panic!("Open Bus Read on address {addr:06X} (PPU)");
