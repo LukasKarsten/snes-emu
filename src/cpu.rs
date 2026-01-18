@@ -1973,6 +1973,7 @@ fn do_step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
     }
 
     if emu.cpu.stopped {
+        emu.cpu.cycles += 6;
         return StepResult::Stepped;
     }
 
@@ -1982,6 +1983,7 @@ fn do_step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
     }
 
     if emu.cpu.waiting {
+        emu.cpu.cycles += 6;
         return StepResult::Stepped;
     }
 
