@@ -325,7 +325,7 @@ pub struct Cpu {
     // read-only
     pub rdnmi_vblank_nmi_flag: bool,
     pub rdnmi_cpu_version_number: u4,
-    pub timeup_hv_count_timer_irq_flag: bool,
+    pub hv_irq_cond: bool,
     pub hvbjoy_vblank_period_flag: bool,
     pub hvbjoy_hblank_period_flag: bool,
     pub hvbjoy_auto_joypad_read_busy_flag: bool,
@@ -344,7 +344,6 @@ pub struct Cpu {
     pub joy4h: u8,
 
     pub regs: Registers,
-    nmi_pending: bool,
     pending_interrupts: u8,
     dma_counter: u8,
     stopped: bool,
@@ -378,7 +377,7 @@ impl Cpu {
             memsel: 0x00,
             rdnmi_vblank_nmi_flag: true,
             rdnmi_cpu_version_number: u4::new(2),
-            timeup_hv_count_timer_irq_flag: false,
+            hv_irq_cond: false,
             hvbjoy_vblank_period_flag: false,
             hvbjoy_hblank_period_flag: false,
             hvbjoy_auto_joypad_read_busy_flag: false,
@@ -396,7 +395,6 @@ impl Cpu {
             joy4l: 0x00,
             joy4h: 0x00,
             regs: Registers::default(),
-            nmi_pending: false,
             pending_interrupts: 0,
             dma_counter: 0,
             stopped: false,
@@ -415,9 +413,13 @@ impl Cpu {
         self.pending_interrupts |= 1 << interrupt as u8;
     }
 
+    pub fn dismiss_interrupt(&mut self, interrupt: Interrupt) {
+        self.pending_interrupts &= !(1 << interrupt as u8);
+    }
+
     pub fn set_vblank_nmi_enable(&mut self, enable: bool) {
         if enable && !self.nmitimen_vblank_nmi_enable && self.rdnmi_vblank_nmi_flag {
-            self.nmi_pending = true;
+            self.raise_interrupt(Interrupt::Nmi);
         }
 
         self.nmitimen_vblank_nmi_enable = enable;
@@ -425,7 +427,7 @@ impl Cpu {
 
     pub fn set_vblank_nmi_flag(&mut self, nmi: bool) {
         if nmi && !self.rdnmi_vblank_nmi_flag && self.nmitimen_vblank_nmi_enable {
-            self.nmi_pending = true;
+            self.raise_interrupt(Interrupt::Nmi);
         }
 
         self.rdnmi_vblank_nmi_flag = nmi;
@@ -442,7 +444,6 @@ impl Cpu {
         self.memsel = 0x00;
         self.rdnmi_vblank_nmi_flag = true;
         self.rdnmi_cpu_version_number = u4::new(2);
-        self.timeup_hv_count_timer_irq_flag = false;
         self.joy1l = 0x00;
         self.joy1h = 0x00;
         self.joy2l = 0x00;
@@ -458,7 +459,7 @@ impl Cpu {
             0x4210 => Some(
                 self.rdnmi_cpu_version_number.value() | (self.rdnmi_vblank_nmi_flag as u8) << 7,
             ),
-            0x4211 => Some((self.timeup_hv_count_timer_irq_flag as u8) << 7),
+            0x4211 => Some(((self.pending_interrupts >> INT_IRQ) & 1) << 7),
             0x4212 => Some(
                 self.hvbjoy_auto_joypad_read_busy_flag as u8
                     | (self.hvbjoy_hblank_period_flag as u8) << 1
@@ -483,19 +484,18 @@ impl Cpu {
 
     pub fn read(&mut self, addr: u32) -> Option<u8> {
         match addr {
-            0x4210 => Some(
-                self.rdnmi_cpu_version_number.value() | (self.rdnmi_vblank_nmi_flag as u8) << 7,
-            ),
+            0x4210 => {
+                let value =
+                    self.rdnmi_cpu_version_number.value() | (self.rdnmi_vblank_nmi_flag as u8) << 7;
+                self.rdnmi_vblank_nmi_flag = false;
+                Some(value)
+            }
             0x4211 => {
-                let value = (self.timeup_hv_count_timer_irq_flag as u8) << 7;
-                // TODO: Should not be reset when the IRQ condition is currently true:
-                //
-                // https://problemkaputt.de/fullsnes.htm#snesppuinterrupts
-                // > The IRQ flag is automatically reset after reading from this register (except
-                // > when reading at the very time when the IRQ condition is true (which lasts for
-                // > 4-8 master cycles), then the CPU receives bit7=1, but register bit7 isn't
-                // > cleared).
-                self.timeup_hv_count_timer_irq_flag = false;
+                let value = ((self.pending_interrupts >> INT_IRQ) & 1) << 7;
+                // Dismiss the IRQ interrupt, except when the condition is currently true
+                if !self.hv_irq_cond {
+                    self.dismiss_interrupt(Interrupt::Irq);
+                }
                 Some(value)
             }
             0x4212 => {
@@ -535,9 +535,10 @@ impl Cpu {
                 };
                 self.nmitimen_joypad_enable = value & 0x01 != 0;
 
-                // also clear timeup IRQ flag when IRQs are disabled
+                // also dismiss timeup IRQ interrupt when IRQs are disabled
                 if self.nmitimen_hv_irq == HvIrq::Disable {
-                    self.timeup_hv_count_timer_irq_flag = false;
+                    self.dismiss_interrupt(Interrupt::Irq);
+                    self.hv_irq_cond = false;
                 }
             }
             0x4201 => {
@@ -678,7 +679,9 @@ pub fn read(emu: &mut Snes, addr: u32) -> u8 {
     };
 
     // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
+    // TODO: Should we increment the `cycles` counter before or after reading?
     emu.cpu.cycles += 6;
+    run_timer(emu, StepResult::Stepped);
 
     let value = match device {
         BusDevice::WRam => emu.wram.data[device_addr as usize],
@@ -735,8 +738,9 @@ pub fn write(emu: &mut Snes, addr: u32, value: u8) {
     };
 
     // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
-    // TODO: Should we increment the `cycles` counter before or after reading?
+    // TODO: Should we increment the `cycles` counter before or after writing?
     emu.cpu.cycles += 6;
+    run_timer(emu, StepResult::Stepped);
 
     match device {
         BusDevice::WRam => emu.wram.data[device_addr as usize] = value,
@@ -1963,7 +1967,7 @@ fn process_interrupt(emu: &mut Snes) {
     }
 }
 
-pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
+fn do_step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
     if emu.cpu.mdmaen != 0 {
         return process_dma(emu);
     }
@@ -1971,10 +1975,6 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
     if emu.cpu.stopped {
         return StepResult::Stepped;
     }
-
-    emu.cpu.pending_interrupts |= (emu.cpu.nmi_pending as u8) << INT_NMI;
-    emu.cpu.pending_interrupts |= (emu.cpu.timeup_hv_count_timer_irq_flag as u8) << INT_IRQ;
-    emu.cpu.nmi_pending = false;
 
     if emu.cpu.pending_interrupts != 0 {
         process_interrupt(emu);
@@ -2354,9 +2354,19 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
         0xFB => inst_xce(emu),
     }
 
-    let height = emu.ppu.output_height();
+    StepResult::Stepped
+}
 
-    let mut result = StepResult::Stepped;
+pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
+    let result = do_step(emu, ignore_breakpoints);
+    if result != StepResult::Stepped {
+        return result;
+    }
+    run_timer(emu, result)
+}
+
+fn run_timer(emu: &mut Snes, mut result: StepResult) -> StepResult {
+    let height = emu.ppu.output_height();
 
     while emu.cpu.hv_counter_cycles < emu.cpu.cycles {
         emu.cpu.hv_counter_cycles += 4;
@@ -2391,12 +2401,18 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
         let v_irq = emu.cpu.v_counter == emu.cpu.vtime.value();
 
         // PERF: We could eliminate this match with some bit fiddling
-        match emu.cpu.nmitimen_hv_irq {
-            HvIrq::Disable => (),
-            HvIrq::Horizontal => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq,
-            HvIrq::Vertical => emu.cpu.timeup_hv_count_timer_irq_flag = v_irq,
-            HvIrq::End => emu.cpu.timeup_hv_count_timer_irq_flag = h_irq & v_irq,
+        let hv_irq_cond = match emu.cpu.nmitimen_hv_irq {
+            HvIrq::Disable => false,
+            HvIrq::Horizontal => h_irq,
+            HvIrq::Vertical => v_irq && emu.cpu.v_counter == 0,
+            HvIrq::End => h_irq & v_irq,
+        };
+
+        // Set the IRQ flag only when the condition *becomes* true.
+        if hv_irq_cond & !emu.cpu.hv_irq_cond {
+            emu.cpu.raise_interrupt(Interrupt::Irq);
         }
+        emu.cpu.hv_irq_cond = hv_irq_cond;
 
         if emu.cpu.h_counter == 277 && emu.cpu.v_counter == height {
             result = StepResult::FrameFinished;

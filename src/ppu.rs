@@ -429,7 +429,9 @@ impl Ppu {
             0x2135 => self.mpym,
             0x2136 => self.mpyh,
             0x2137 => {
-                // TODO: Latch H/V Counter
+                self.ophct = self.hpos;
+                self.opvct = self.vpos;
+                self.stat78 |= 0x40;
                 return None;
             }
             0x2138 => {
@@ -473,7 +475,13 @@ impl Ppu {
                 value
             }
             0x213E => self.stat77,
-            0x213F => self.stat78,
+            0x213F => {
+                let value = self.stat78;
+                self.stat78 &= !0x40;
+                self.ophct_selector = 0;
+                self.opvct_selector = 0;
+                value
+            }
             _ => return None,
         };
 
