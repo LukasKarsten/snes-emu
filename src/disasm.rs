@@ -162,7 +162,7 @@ pub fn disassemble(emu: &Snes, instructions: &mut [Instruction]) {
         };
 
         let imm_x = || {
-            if emu.cpu.regs.p.xb {
+            if emu.cpu.regs.p.x {
                 Param::Immediate8(p8)
             } else {
                 Param::Immediate16(p16)

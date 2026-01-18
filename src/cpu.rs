@@ -70,9 +70,8 @@ pub struct Flags {
     pub i: bool,
     /// Decimal mode
     pub d: bool,
-    /// e=0 -> Index register width
-    /// e=1 -> Break
-    pub xb: bool,
+    /// Index register width
+    pub x: bool,
     /// Accumulator and Memory width
     pub m: bool,
     /// Overflow
@@ -90,7 +89,7 @@ impl Default for Flags {
             z: false,
             i: false,
             d: false,
-            xb: true,
+            x: true,
             m: true,
             v: false,
             n: false,
@@ -105,7 +104,7 @@ impl Flags {
         self.z = bits & 0x02 != 0;
         self.i = bits & 0x04 != 0;
         self.d = bits & 0x08 != 0;
-        self.xb = bits & 0x10 != 0;
+        self.x = bits & 0x10 != 0;
         self.m = bits & 0x20 != 0;
         self.v = bits & 0x40 != 0;
         self.n = bits & 0x80 != 0;
@@ -116,7 +115,7 @@ impl Flags {
             | (self.z as u8) << 1
             | (self.i as u8) << 2
             | (self.d as u8) << 3
-            | (self.xb as u8) << 4
+            | (self.x as u8) << 4
             | (self.m as u8) << 5
             | (self.v as u8) << 6
             | (self.n as u8) << 7
@@ -134,7 +133,7 @@ impl fmt::Debug for Flags {
         write_flag(self.n, b'n')?;
         write_flag(self.v, b'v')?;
         write_flag(self.m, b'm')?;
-        write_flag(self.xb, if self.e { b'b' } else { b'x' })?;
+        write_flag(self.x, b'x')?;
         write_flag(self.d, b'd')?;
         write_flag(self.i, b'i')?;
         write_flag(self.z, b'z')?;
@@ -188,7 +187,7 @@ pub enum Operand {
 impl Operand {
     fn is_not_wide(self, flags: Flags) -> bool {
         match self {
-            Self::X | Self::Y => flags.xb,
+            Self::X | Self::Y => flags.x,
             Self::A | Self::Memory(_) => flags.m,
         }
     }
@@ -870,11 +869,6 @@ fn int_reset(emu: &mut Snes) {
 }
 
 fn int_break(emu: &mut Snes) {
-    if emu.cpu.regs.p.e {
-        // FIXME: Should XH and YH also be set to zero when the x/b flag is set in emulation
-        // mode?
-        emu.cpu.regs.p.xb = true;
-    }
     skip_instr_byte(emu);
     enter_interrupt_handler(emu, Interrupt::Break);
 }
@@ -1063,7 +1057,7 @@ fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
         AddressingMode::ImmediateX => {
             let regs = &mut emu.cpu.regs;
             let pc = regs.pc.get();
-            let delta = 2 - regs.p.xb as u16;
+            let delta = 2 - regs.p.x as u16;
             regs.pc.set(regs.pc.get().wrapping_add(delta));
             Pointer::new16(regs.k, pc)
         }
@@ -1537,7 +1531,7 @@ fn inst_rti(emu: &mut Snes) {
     emu.cpu.regs.p.set_from_bits(p);
     if !is_native {
         emu.cpu.regs.p.m = true;
-        emu.cpu.regs.p.xb = true;
+        emu.cpu.regs.p.x = true;
     }
     flags_updated(emu);
 
@@ -1582,7 +1576,7 @@ fn inst_lda(emu: &mut Snes, addr_mode: AddressingMode) {
 
 fn inst_ldx(emu: &mut Snes, addr_mode: AddressingMode) {
     let op = read_operand(emu, addr_mode);
-    if emu.cpu.regs.p.xb {
+    if emu.cpu.regs.p.x {
         let value = get_operand_u8(emu, op);
         emu.cpu.regs.x.setl(value);
         emu.cpu.regs.p.n = value & 0x80 != 0;
@@ -1597,7 +1591,7 @@ fn inst_ldx(emu: &mut Snes, addr_mode: AddressingMode) {
 
 fn inst_ldy(emu: &mut Snes, addr_mode: AddressingMode) {
     let op = read_operand(emu, addr_mode);
-    if emu.cpu.regs.p.xb {
+    if emu.cpu.regs.p.x {
         let value = get_operand_u8(emu, op);
         emu.cpu.regs.y.setl(value);
         emu.cpu.regs.p.n = value & 0x80 != 0;
@@ -1621,7 +1615,7 @@ fn inst_sta(emu: &mut Snes, addr_mode: AddressingMode) {
 
 fn inst_stx(emu: &mut Snes, addr_mode: AddressingMode) {
     let op = read_operand(emu, addr_mode);
-    if emu.cpu.regs.p.xb {
+    if emu.cpu.regs.p.x {
         set_operand_u8(emu, op, emu.cpu.regs.x.getl());
     } else {
         set_operand_u16(emu, op, emu.cpu.regs.x.get());
@@ -1630,7 +1624,7 @@ fn inst_stx(emu: &mut Snes, addr_mode: AddressingMode) {
 
 fn inst_sty(emu: &mut Snes, addr_mode: AddressingMode) {
     let op = read_operand(emu, addr_mode);
-    if emu.cpu.regs.p.xb {
+    if emu.cpu.regs.p.x {
         set_operand_u8(emu, op, emu.cpu.regs.y.getl());
     } else {
         set_operand_u16(emu, op, emu.cpu.regs.y.get());
@@ -1663,7 +1657,7 @@ fn inst_mvn_mvp(emu: &mut Snes, step: i16) {
     let mut next_x = src_offset.wrapping_add_signed(step);
     let mut next_y = dst_offset.wrapping_add_signed(step);
 
-    if emu.cpu.regs.p.xb {
+    if emu.cpu.regs.p.x {
         next_x &= 0xFF;
         next_y &= 0xFF;
     }
@@ -1780,7 +1774,7 @@ fn inst_transfer(emu: &mut Snes, src: Operand, dst: Operand) {
 }
 
 fn inst_tsx(emu: &mut Snes) {
-    if emu.cpu.regs.p.xb {
+    if emu.cpu.regs.p.x {
         let value = emu.cpu.regs.s.getl();
         emu.cpu.regs.x.setl(value);
         emu.cpu.regs.p.n = value & 0x80 != 0;
@@ -1848,11 +1842,11 @@ fn inst_xce(emu: &mut Snes) {
 fn flags_updated(emu: &mut Snes) {
     if emu.cpu.regs.p.e {
         emu.cpu.regs.p.m = true;
-        emu.cpu.regs.p.xb = true;
+        emu.cpu.regs.p.x = true;
         emu.cpu.regs.s.seth(0x01);
     }
 
-    if emu.cpu.regs.p.xb {
+    if emu.cpu.regs.p.x {
         emu.cpu.regs.x.seth(0x00);
         emu.cpu.regs.y.seth(0x00);
     }
