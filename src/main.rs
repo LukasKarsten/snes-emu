@@ -104,7 +104,6 @@ impl ApplicationHandler for App {
 
         {
             let _span = tracy_client::span!("run emulation");
-            tracing::trace!("Runnging emulation");
             let hit_breakpoint = emu_state.snes.run();
 
             if hit_breakpoint {
