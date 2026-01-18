@@ -27,6 +27,7 @@ pub struct Snes {
     joypad: JoypadIo,
     pub dma: Dma,
     mdr: u8,
+    frame_finished: bool,
 }
 
 impl Snes {
@@ -41,6 +42,7 @@ impl Snes {
             joypad: JoypadIo::default(),
             dma: Dma::default(),
             mdr: 0,
+            frame_finished: false,
         };
         snes.cpu.raise_interrupt(cpu::Interrupt::Reset);
         snes
@@ -105,16 +107,17 @@ impl Snes {
             self.cpu.hvbjoy_auto_joypad_read_busy_flag = false;
         }
 
-        loop {
+        while !self.frame_finished {
             let result = cpu::step(self, ignore_breakpoints);
             ignore_breakpoints = false;
 
-            match result {
-                StepResult::Stepped => (),
-                StepResult::BreakpointHit => return true,
-                StepResult::FrameFinished => return false,
+            if result == StepResult::BreakpointHit {
+                return true;
             }
         }
+
+        self.frame_finished = false;
+        false
     }
 
     pub fn step(&mut self) -> StepResult {

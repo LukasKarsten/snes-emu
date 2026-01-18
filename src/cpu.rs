@@ -281,7 +281,6 @@ pub enum HvIrq {
 pub enum StepResult {
     Stepped,
     BreakpointHit,
-    FrameFinished,
 }
 
 pub struct CpuDebug {
@@ -680,7 +679,7 @@ pub fn read(emu: &mut Snes, addr: u32) -> u8 {
     // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
     // TODO: Should we increment the `cycles` counter before or after reading?
     emu.cpu.cycles += 6;
-    run_timer(emu, StepResult::Stepped);
+    run_timer(emu);
 
     let value = match device {
         BusDevice::WRam => Some(emu.wram.data[device_addr as usize]),
@@ -723,7 +722,7 @@ pub fn write(emu: &mut Snes, addr: u32, value: u8) {
     // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
     // TODO: Should we increment the `cycles` counter before or after writing?
     emu.cpu.cycles += 6;
-    run_timer(emu, StepResult::Stepped);
+    run_timer(emu);
 
     match device {
         BusDevice::WRam => emu.wram.data[device_addr as usize] = value,
@@ -2344,14 +2343,14 @@ fn do_step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
 
 pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
     let result = do_step(emu, ignore_breakpoints);
-    if result != StepResult::Stepped {
-        return result;
-    }
-    run_timer(emu, result)
+    run_timer(emu);
+    result
 }
 
-fn run_timer(emu: &mut Snes, mut result: StepResult) -> StepResult {
+fn run_timer(emu: &mut Snes) {
     let height = emu.ppu.output_height();
+
+    let mut frame_finished = false;
 
     while emu.cpu.hv_counter_cycles < emu.cpu.cycles {
         emu.cpu.hv_counter_cycles += 4;
@@ -2400,18 +2399,17 @@ fn run_timer(emu: &mut Snes, mut result: StepResult) -> StepResult {
         emu.cpu.hv_irq_cond = hv_irq_cond;
 
         if emu.cpu.h_counter == 277 && emu.cpu.v_counter == height {
-            result = StepResult::FrameFinished;
+            frame_finished = true;
         }
     }
 
-    if result == StepResult::FrameFinished {
+    if frame_finished {
         // Make sure everything's synchronized
         ppu::catch_up(emu);
         apu::catch_up(emu);
         assert_eq!(emu.cpu.hv_counter_cycles, emu.ppu.cycles);
         assert_eq!(emu.cpu.h_counter, emu.ppu.hpos);
         assert_eq!(emu.cpu.v_counter, emu.ppu.vpos);
+        emu.frame_finished = true;
     }
-
-    result
 }
