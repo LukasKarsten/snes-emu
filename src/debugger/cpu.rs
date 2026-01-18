@@ -281,8 +281,7 @@ fn dump_instructions(snes: &Snes) {
         let range = arrow.range();
 
         let mut column = 0;
-        for j in 0..i {
-            let other = &branch_arrows[j];
+        for other in &branch_arrows[..i] {
             if other.distance() > 256 {
                 continue;
             }

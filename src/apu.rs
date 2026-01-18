@@ -65,6 +65,18 @@ pub struct Psw {
 }
 
 impl Psw {
+    fn set_from_bits(&mut self, bits: u8) {
+        self.c = bits & 0x01 != 0;
+        self.z = bits & 0x02 != 0;
+        self.i = bits & 0x04 != 0;
+        self.h = bits & 0x08 != 0;
+        self.b = bits & 0x10 != 0;
+        self.p = bits & 0x20 != 0;
+        self.v = bits & 0x40 != 0;
+        self.n = bits & 0x80 != 0;
+    }
+
+    #[allow(clippy::identity_op)]
     fn to_bits(&self) -> u8 {
         (self.c as u8) << 0
             | (self.z as u8) << 1
@@ -74,17 +86,6 @@ impl Psw {
             | (self.p as u8) << 5
             | (self.v as u8) << 6
             | (self.n as u8) << 7
-    }
-
-    fn set_from_bits(&mut self, bits: u8) {
-        self.c = bits >> 0 & 1 != 0;
-        self.z = bits >> 1 & 1 != 0;
-        self.i = bits >> 2 & 1 != 0;
-        self.h = bits >> 3 & 1 != 0;
-        self.b = bits >> 4 & 1 != 0;
-        self.p = bits >> 5 & 1 != 0;
-        self.v = bits >> 6 & 1 != 0;
-        self.n = bits >> 7 & 1 != 0;
     }
 }
 
@@ -556,7 +557,7 @@ impl Apu {
         let result = self.get_operand_u8(op).wrapping_sub(1);
         self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
-        self.psw.z = result & 0xFF == 0;
+        self.psw.z = result == 0;
     }
 
     fn inst_inc(&mut self, target: impl Target) {
@@ -564,7 +565,7 @@ impl Apu {
         let result = self.get_operand_u8(op).wrapping_add(1);
         self.set_operand_u8(op, result);
         self.psw.n = result & 0x80 != 0;
-        self.psw.z = result & 0xFF == 0;
+        self.psw.z = result == 0;
     }
 
     fn inst_addw(&mut self) {
@@ -628,8 +629,8 @@ impl Apu {
         let ya = self.get_ya();
         let x = self.x as u16;
         if self.y < self.x << 1 {
-            self.a = (ya / x as u16) as u8;
-            self.y = (ya % x as u16) as u8;
+            self.a = (ya / x) as u8;
+            self.y = (ya % x) as u8;
         } else {
             let quotient = ya - (x << 9);
             let divident = 256 - x;
@@ -760,8 +761,7 @@ impl Apu {
     }
 
     fn inst_xcn(&mut self) {
-        self.a = self.a >> 4 | self.a << 4;
-
+        self.a = self.a.rotate_right(4);
         self.psw.n = self.a & 0x80 != 0;
         self.psw.z = self.a == 0;
     }
@@ -1218,6 +1218,7 @@ pub mod disasm {
     }
 
     impl Instruction {
+        #[allow(clippy::len_without_is_empty)]
         pub fn len(&self) -> usize {
             1 + self.param1.len() + self.param2.len() + self.param3.len()
         }

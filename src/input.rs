@@ -34,6 +34,7 @@ impl<F> Joypad<F> {
 }
 
 impl<F: FnMut() -> JoypadState> InputDevice for Joypad<F> {
+    #[allow(clippy::identity_op)]
     fn strobe(&mut self) {
         let state = (self.updater)();
         self.buffer = 0;

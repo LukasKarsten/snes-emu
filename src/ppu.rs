@@ -666,6 +666,7 @@ impl Ppu {
                 self.cgadd = self.cgadd.wrapping_add(self.cgram_selector);
                 self.cgram_selector ^= 1;
             }
+            #[allow(clippy::identity_op)]
             0x2123 => {
                 self.windows.w1en &= !0x06;
                 self.windows.w2en &= !0x06;
@@ -684,6 +685,7 @@ impl Ppu {
                 self.windows.w2inv |= (value & 0x40) >> 4;
                 self.windows.w2en |= (value & 0x80) >> 5;
             }
+            #[allow(clippy::identity_op)]
             0x2124 => {
                 self.windows.w1en &= !0x18;
                 self.windows.w2en &= !0x18;
@@ -702,6 +704,7 @@ impl Ppu {
                 self.windows.w2inv |= (value & 0x40) >> 2;
                 self.windows.w2en |= (value & 0x80) >> 3;
             }
+            #[allow(clippy::identity_op)]
             0x2125 => {
                 self.windows.w1en &= !0x21;
                 self.windows.w2en &= !0x21;
@@ -992,8 +995,9 @@ impl Ppu {
         let mut colors = [LayerColor::TRANSPARENT; NUM_LAYERS];
         colors[LAYER_BACKDROP as usize] = LayerColor::new(self.get_color(0), 0);
 
-        for i in 0..usize::from(mode_def.num_backgrounds) {
-            colors[i] = self.get_bg_color(x, y, i, mode_def);
+        let num_bgs = usize::from(mode_def.num_backgrounds);
+        for (i, color) in colors.iter_mut().enumerate().take(num_bgs) {
+            *color = self.get_bg_color(x, y, i, mode_def);
         }
 
         colors
@@ -1035,6 +1039,7 @@ impl Ppu {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn get_screen_color(
         &self,
         bg: &Background,
@@ -1048,7 +1053,7 @@ impl Ppu {
     ) -> LayerColor {
         let tilemap_addr = ((bg.base_address.value() + screen) as u16) << 10; // * 1024
         let map_entry_addr = tilemap_addr.wrapping_add(tile_idx) << 1;
-        let map_entry_lo = self.vram[usize::from(map_entry_addr + 0)];
+        let map_entry_lo = self.vram[usize::from(map_entry_addr)];
         let map_entry_hi = self.vram[usize::from(map_entry_addr + 1)];
         let map_entry = (map_entry_lo as u16) | (map_entry_hi as u16) << 8;
 
@@ -1081,7 +1086,7 @@ impl Ppu {
             let plane_pair_addr = tile_addr
                 .wrapping_add((tile_off_y & 0x07) * 2)
                 .wrapping_add(plane_off * 8);
-            let plane1 = self.vram[usize::from(plane_pair_addr) + 0];
+            let plane1 = self.vram[usize::from(plane_pair_addr)];
             let plane2 = self.vram[usize::from(plane_pair_addr) + 1];
 
             let bit1 = plane1.rotate_left(tile_off_x as u32 + 1) & 1;
@@ -1123,6 +1128,7 @@ struct ModeDefinition {
     bpp: [u8; 4],
     palette_offset: [u8; 4],
     bg_priorities: [[u8; 2]; 4],
+    #[expect(unused)] // will be used when implementing object rendering
     obj_priorities: [u8; 4],
 }
 
@@ -1256,6 +1262,7 @@ pub fn catch_up(emu: &mut Snes) {
         let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos > 277;
         let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos > height;
 
+        #[allow(clippy::identity_op)]
         if !hblank && !vblank {
             let x = emu.ppu.hpos - 22;
             let y = emu.ppu.vpos - 1;

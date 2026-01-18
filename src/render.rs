@@ -125,7 +125,7 @@ impl Renderer {
             &self.device,
             &self.queue,
             &mut encoder,
-            &primitives,
+            primitives,
             &screen_descriptor,
         );
 
@@ -143,11 +143,8 @@ impl Renderer {
                 ..Default::default()
             });
 
-            self.egui_renderer.render(
-                &mut rpass.forget_lifetime(),
-                &primitives,
-                &screen_descriptor,
-            );
+            self.egui_renderer
+                .render(&mut rpass.forget_lifetime(), primitives, &screen_descriptor);
         }
 
         self.queue.submit(iter::once(encoder.finish()));

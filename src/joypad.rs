@@ -1,19 +1,10 @@
 use super::input::InputDevice;
 
+#[derive(Default)]
 pub struct JoypadIo {
     joywr: u8,
     pub input1: Option<Box<dyn InputDevice>>,
     pub input2: Option<Box<dyn InputDevice>>,
-}
-
-impl Default for JoypadIo {
-    fn default() -> Self {
-        Self {
-            joywr: 0,
-            input1: None,
-            input2: None,
-        }
-    }
 }
 
 impl JoypadIo {
@@ -35,9 +26,8 @@ impl JoypadIo {
     }
 
     pub fn write(&mut self, addr: u32, value: u8) {
-        match addr {
-            0x4016 => self.joywr = value,
-            _ => (),
+        if addr == 0x4016 {
+            self.joywr = value
         }
     }
 }

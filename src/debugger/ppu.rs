@@ -20,7 +20,7 @@ impl super::Tab for PpuMiscTab {
                 let mut v = value.value();
                 egui::DragValue::new(&mut v)
                     .range((T::MIN.value())..=(T::MAX.value()))
-                    .hexadecimal((T::BITS + 3) / 4, false, true)
+                    .hexadecimal(T::BITS.div_ceil(4), false, true)
                     .ui(ui);
                 *value = T::new(v);
 
@@ -505,10 +505,10 @@ fn compute_vram_image(vram: &[u8], bpp: u8) -> egui::ColorImage {
                 let plane1 = vram[vram_offset + y * 2 + plane_offset * 8];
                 let plane2 = vram[vram_offset + y * 2 + plane_offset * 8 + 1];
 
-                for x in 0..8 {
+                for (x, line) in line.iter_mut().enumerate().take(8) {
                     let bit1 = plane1.rotate_left(x as u32 + 1) & 1;
                     let bit2 = plane2.rotate_left(x as u32 + 1) & 1;
-                    line[x] = line[x] << 2 | bit2 << 1 | bit1;
+                    *line = *line << 2 | bit2 << 1 | bit1;
                 }
             }
         }

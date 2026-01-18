@@ -70,7 +70,7 @@ impl<'a> TabViewer for DebugTabViewer<'a> {
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        tab.tab.ui(&mut self.emulation_state, ui)
+        tab.tab.ui(self.emulation_state, ui)
     }
 
     fn closeable(&mut self, tab: &mut Self::Tab) -> bool {
@@ -130,11 +130,11 @@ impl Default for Debugger {
             NodeIndex::root(),
             0.5,
             vec![
-                gen.create(Box::new(PpuMiscTab::default())),
-                gen.create(Box::new(PpuBackgroundsTab::default())),
-                gen.create(Box::new(PpuObjectsTab::default())),
-                gen.create(Box::new(PpuScreensTab::default())),
-                gen.create(Box::new(PpuWindowsTab::default())),
+                gen.create(Box::new(PpuMiscTab)),
+                gen.create(Box::new(PpuBackgroundsTab)),
+                gen.create(Box::new(PpuObjectsTab)),
+                gen.create(Box::new(PpuScreensTab)),
+                gen.create(Box::new(PpuWindowsTab)),
             ],
         );
 
@@ -143,7 +143,7 @@ impl Default for Debugger {
             0.5,
             vec![
                 gen.create(Box::new(CpuTab::default())),
-                gen.create(Box::new(DmaTab::default())),
+                gen.create(Box::new(DmaTab)),
             ],
         );
 
@@ -156,7 +156,7 @@ impl Default for Debugger {
             ],
         );
 
-        tree.split_below(right, 0.75, vec![gen.create(Box::new(ApuTab::default()))]);
+        tree.split_below(right, 0.75, vec![gen.create(Box::new(ApuTab))]);
 
         Self {
             generator: gen,

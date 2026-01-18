@@ -110,6 +110,7 @@ impl Flags {
         self.n = bits & 0x80 != 0;
     }
 
+    #[allow(clippy::identity_op)]
     pub fn to_bits(&self) -> u8 {
         (self.c as u8) << 0
             | (self.z as u8) << 1
@@ -619,7 +620,7 @@ fn resolve_addr(addr: u32, mapping_mode: MappingMode) -> Option<(BusDevice, u32)
     let mut bank = (addr >> 16) as u8;
     let offset = addr as u16;
 
-    if bank >= 0x7E && bank <= 0x7F {
+    if (0x7E..=0x7F).contains(&bank) {
         return Some((BusDevice::WRam, addr - 0x7E_0000));
     }
 
@@ -1013,7 +1014,7 @@ fn read_pointer(emu: &mut Snes, mode: AddressingMode) -> Pointer {
                 let y = emu.cpu.regs.y.getl();
                 Pointer::new8(0, dh, ll.wrapping_add(y))
             } else {
-                let d = emu.cpu.regs.d.get() as u16;
+                let d = emu.cpu.regs.d.get();
                 let y = emu.cpu.regs.y.get();
                 Pointer::new16(0, d.wrapping_add(ll as u16).wrapping_add(y))
             }
@@ -1832,10 +1833,7 @@ fn inst_xba(emu: &mut Snes) {
 }
 
 fn inst_xce(emu: &mut Snes) {
-    let tmp = emu.cpu.regs.p.c;
-    emu.cpu.regs.p.c = emu.cpu.regs.p.e;
-    emu.cpu.regs.p.e = tmp;
-
+    std::mem::swap(&mut emu.cpu.regs.p.c, &mut emu.cpu.regs.p.e);
     flags_updated(emu);
 }
 
@@ -1914,7 +1912,7 @@ fn process_dma(emu: &mut Snes) -> StepResult {
         emu.cpu.mdmaen ^= 1 << idx;
     }
 
-    return StepResult::Stepped;
+    StepResult::Stepped
 }
 
 #[cold]
