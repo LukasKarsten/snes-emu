@@ -2380,7 +2380,7 @@ fn run_timer(emu: &mut Snes) {
         let hv_irq_cond = match emu.cpu.nmitimen_hv_irq {
             HvIrq::Disable => false,
             HvIrq::Horizontal => h_irq,
-            HvIrq::Vertical => v_irq && emu.cpu.v_counter == 0,
+            HvIrq::Vertical => v_irq && emu.cpu.h_counter == 0,
             HvIrq::End => h_irq & v_irq,
         };
 
