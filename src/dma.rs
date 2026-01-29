@@ -1,55 +1,118 @@
-use bitbybit::{bitenum, bitfield};
-
-#[derive(PartialEq, Eq)]
-#[bitenum(u1, exhaustive = true)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum TransferDirection {
-    AToB = 0,
-    BToA = 1,
+    #[default]
+    AToB,
+    BToA,
 }
 
-#[derive(PartialEq, Eq)]
-#[bitenum(u1, exhaustive = true)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingMode {
-    DirectTable = 0,
-    IndirectTable = 1,
+    #[default]
+    DirectTable,
+    IndirectTable,
 }
 
-#[derive(PartialEq, Eq)]
-#[bitenum(u2, exhaustive = true)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum ABusAddressStep {
-    Increment = 0,
-    Decrement = 2,
-    Fixed1 = 1,
-    Fixed2 = 3,
+    #[default]
+    Increment,
+    Decrement,
+    Fixed1,
+    Fixed2,
 }
 
-#[derive(PartialEq, Eq)]
-#[bitenum(u3, exhaustive = true)]
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum TransferUnitSelect {
-    WO1Bytes1Regs = 0,
-    WO2Bytes2Regs = 1,
-    WT2Bytes1Regs = 2,
-    WT4Bytes2Regs = 3,
-    WO4Bytes4Regs = 4,
-    WO4Bytes2Regs = 5,
-    WT2Bytes1RegsAgain = 6,
-    WT4Bytes2RegsAgain = 7,
+    #[default]
+    WO1Bytes1Regs,
+    WO2Bytes2Regs,
+    WT2Bytes1Regs,
+    WT4Bytes2Regs,
+    WO4Bytes4Regs,
+    WO4Bytes2Regs,
+    WT2Bytes1RegsAgain,
+    WT4Bytes2RegsAgain,
 }
 
-#[bitfield(u8, default = 0xFF)]
+#[derive(Default, Clone, Copy)]
 pub struct DMAP {
-    #[bit(7, rw)]
-    transfer_direction: TransferDirection,
-    #[bit(6, rw)]
-    addressing_mode: AddressingMode,
-    #[bits(3..=4, rw)]
-    a_bus_address_step: ABusAddressStep,
-    #[bits(0..=2, rw)]
-    transfer_unit_select: TransferUnitSelect,
+    pub transfer_direction: TransferDirection,
+    pub addressing_mode: AddressingMode,
+    pub a_bus_address_step: ABusAddressStep,
+    pub transfer_unit_select: TransferUnitSelect,
+}
+
+impl DMAP {
+    fn from_bits(bits: u8) -> Self {
+        let transfer_direction = match bits >> 7 & 0x01 {
+            0 => TransferDirection::AToB,
+            1 => TransferDirection::BToA,
+            _ => unreachable!(),
+        };
+        let addressing_mode = match bits >> 6 & 0x01 {
+            0 => AddressingMode::DirectTable,
+            1 => AddressingMode::IndirectTable,
+            _ => unreachable!(),
+        };
+        let a_bus_address_step = match bits >> 3 & 0x03 {
+            0 => ABusAddressStep::Increment,
+            1 => ABusAddressStep::Fixed1,
+            2 => ABusAddressStep::Decrement,
+            3 => ABusAddressStep::Fixed2,
+            _ => unreachable!(),
+        };
+        let transfer_unit_select = match bits & 0x07 {
+            0 => TransferUnitSelect::WO1Bytes1Regs,
+            1 => TransferUnitSelect::WO2Bytes2Regs,
+            2 => TransferUnitSelect::WT2Bytes1Regs,
+            3 => TransferUnitSelect::WT4Bytes2Regs,
+            4 => TransferUnitSelect::WO4Bytes4Regs,
+            5 => TransferUnitSelect::WO4Bytes2Regs,
+            6 => TransferUnitSelect::WT2Bytes1RegsAgain,
+            7 => TransferUnitSelect::WT4Bytes2RegsAgain,
+            _ => unreachable!(),
+        };
+        Self {
+            transfer_direction,
+            addressing_mode,
+            a_bus_address_step,
+            transfer_unit_select,
+        }
+    }
+
+    fn to_bits(self) -> u8 {
+        let transfer_direction = match self.transfer_direction {
+            TransferDirection::AToB => 0,
+            TransferDirection::BToA => 1,
+        };
+        let addressing_mode = match self.addressing_mode {
+            AddressingMode::DirectTable => 0,
+            AddressingMode::IndirectTable => 1,
+        };
+        let a_bus_address_step = match self.a_bus_address_step {
+            ABusAddressStep::Increment => 0,
+            ABusAddressStep::Fixed1 => 1,
+            ABusAddressStep::Decrement => 2,
+            ABusAddressStep::Fixed2 => 3,
+        };
+        let transfer_unit_select = match self.transfer_unit_select {
+            TransferUnitSelect::WO1Bytes1Regs => 0,
+            TransferUnitSelect::WO2Bytes2Regs => 1,
+            TransferUnitSelect::WT2Bytes1Regs => 2,
+            TransferUnitSelect::WT4Bytes2Regs => 3,
+            TransferUnitSelect::WO4Bytes4Regs => 4,
+            TransferUnitSelect::WO4Bytes2Regs => 5,
+            TransferUnitSelect::WT2Bytes1RegsAgain => 6,
+            TransferUnitSelect::WT4Bytes2RegsAgain => 7,
+        };
+        transfer_direction << 7
+            | addressing_mode << 6
+            | a_bus_address_step << 3
+            | transfer_unit_select
+    }
 }
 
 #[derive(Clone, Copy)]
-#[repr(align(16))]
 pub struct DmaChannel {
     pub dmap: DMAP,
     pub bbad: u8,
@@ -87,7 +150,7 @@ impl Dma {
     pub fn read_pure(&self, addr: u32) -> Option<u8> {
         let channel = &self.channels[(addr >> 4 & 0xF) as usize];
         match addr & 0xF {
-            0x0 => Some(channel.dmap.raw_value()),
+            0x0 => Some(channel.dmap.to_bits()),
             0x1 => Some(channel.bbad),
             0x2 => Some(channel.a1t as u8),
             0x3 => Some((channel.a1t >> 8) as u8),
@@ -107,7 +170,7 @@ impl Dma {
     pub fn read(&mut self, addr: u32) -> Option<u8> {
         let channel = &self.channels[(addr >> 4 & 0xF) as usize];
         match addr & 0xF {
-            0x0 => Some(channel.dmap.raw_value()),
+            0x0 => Some(channel.dmap.to_bits()),
             0x1 => Some(channel.bbad),
             0x2 => Some(channel.a1t as u8),
             0x3 => Some((channel.a1t >> 8) as u8),
@@ -127,7 +190,7 @@ impl Dma {
     pub fn write(&mut self, addr: u32, value: u8) {
         let channel = &mut self.channels[(addr >> 4 & 0xF) as usize];
         match addr & 0xF {
-            0x0 => channel.dmap = DMAP::new_with_raw_value(value),
+            0x0 => channel.dmap = DMAP::from_bits(value),
             0x1 => channel.bbad = value,
             0x2 => channel.a1t = channel.a1t & 0xFF00 | value as u16,
             0x3 => channel.a1t = channel.a1t & 0x00FF | (value as u16) << 8,
