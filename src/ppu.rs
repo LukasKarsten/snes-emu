@@ -855,7 +855,7 @@ impl Ppu {
 
         let window = self.compute_window_mask(x);
 
-        let colors = self.get_layer_colors(x, y, mode_def);
+        let mut colors = self.get_layer_colors(x, y, mode_def);
         let main_layers = self.screens.tm & !(window & self.windows.tmw);
         let sub_layers = self.screens.ts & !(window & self.windows.tsw);
 
@@ -914,17 +914,16 @@ impl Ppu {
 
         let mut sub_color = Color::BLACK;
         let mut sub_layer = LAYER_BACKDROP;
+        let backdrop = Color::new(
+            self.screens.backdrop_red,
+            self.screens.backdrop_green,
+            self.screens.backdrop_blue,
+        );
+        colors[LAYER_BACKDROP as usize] = LayerColor::new(backdrop, 0);
         if enable_sub_screen {
             (sub_color, sub_layer) = match self.screens.sub_screen_bg_obj_enable {
                 true => select_color(&colors, sub_layers, bg3_high_priority),
-                false => (
-                    Color::new(
-                        self.screens.backdrop_red,
-                        self.screens.backdrop_green,
-                        self.screens.backdrop_blue,
-                    ),
-                    0xFF,
-                ),
+                false => (backdrop, 0xFF),
             };
         }
 
