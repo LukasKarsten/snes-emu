@@ -141,9 +141,19 @@ impl Default for DmaChannel {
     }
 }
 
+impl DmaChannel {
+    pub fn next_address(&mut self) -> u32 {
+        let addr = (self.a1b as u32) << 16 | (self.a2a as u32);
+        self.a2a = self.a2a.wrapping_add(1);
+        addr
+    }
+}
+
 #[derive(Default)]
 pub struct Dma {
     pub channels: [DmaChannel; 8],
+    pub paused: u8,
+    pub stopped: u8,
 }
 
 impl Dma {

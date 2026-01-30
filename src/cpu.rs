@@ -2,7 +2,11 @@ use std::fmt::{self, Write};
 
 use arbitrary_int::*;
 
-use crate::{apu, ppu, Snes};
+use crate::{
+    apu,
+    dma::{ABusAddressStep, TransferUnitSelect},
+    ppu, Snes,
+};
 
 #[repr(transparent)]
 #[derive(Default, Clone, Copy)]
@@ -344,7 +348,6 @@ pub struct Cpu {
 
     pub regs: Registers,
     pending_interrupts: u8,
-    dma_counter: u8,
     stopped: bool,
     waiting: bool,
     h_counter: u16,
@@ -395,7 +398,6 @@ impl Cpu {
             joy4h: 0x00,
             regs: Registers::default(),
             pending_interrupts: 0,
-            dma_counter: 0,
             stopped: false,
             waiting: false,
             h_counter: 0,
@@ -451,6 +453,10 @@ impl Cpu {
         self.joy3h = 0x00;
         self.joy4l = 0x00;
         self.joy4h = 0x00;
+        self.h_counter = 0;
+        self.v_counter = 0;
+        self.cycles = 0;
+        self.hv_counter_cycles = 0;
     }
 
     pub fn read_pure(&self, addr: u32) -> Option<u8> {
@@ -672,13 +678,19 @@ pub fn read_pure(emu: &Snes, addr: u32) -> Option<u8> {
 }
 
 pub fn read(emu: &mut Snes, addr: u32) -> u8 {
+    read_with_cycle_counting(emu, addr, true)
+}
+
+pub fn read_with_cycle_counting(emu: &mut Snes, addr: u32, count_cycles: bool) -> u8 {
     let Some((device, device_addr)) = resolve_addr(addr, emu.cpu.mapping_mode) else {
         return emu.cpu.mdr;
     };
 
-    // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
-    // TODO: Should we increment the `cycles` counter before or after reading?
-    emu.cpu.cycles += 6;
+    if count_cycles {
+        // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
+        // TODO: Should we increment the `cycles` counter before or after reading?
+        emu.cpu.cycles += 6;
+    }
     run_timer(emu);
 
     let value = match device {
@@ -713,15 +725,21 @@ pub fn read(emu: &mut Snes, addr: u32) -> u8 {
 }
 
 pub fn write(emu: &mut Snes, addr: u32, value: u8) {
+    write_with_cycle_counting(emu, addr, value, true);
+}
+
+pub fn write_with_cycle_counting(emu: &mut Snes, addr: u32, value: u8, count_cycles: bool) {
     emu.cpu.mdr = value;
 
     let Some((device, device_addr)) = resolve_addr(addr, emu.cpu.mapping_mode) else {
         return;
     };
 
-    // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
-    // TODO: Should we increment the `cycles` counter before or after writing?
-    emu.cpu.cycles += 6;
+    if count_cycles {
+        // TODO: Check whether we are accessing slow or fast memory and increment by 6 or 8 accordingly
+        // TODO: Should we increment the `cycles` counter before or after writing?
+        emu.cpu.cycles += 6;
+    }
     run_timer(emu);
 
     match device {
@@ -1857,7 +1875,7 @@ fn stack_modified_new(emu: &mut Snes) {
 }
 
 #[cold]
-fn process_dma(emu: &mut Snes) -> StepResult {
+fn process_gdma(emu: &mut Snes) -> StepResult {
     // FIXME: A DMA could write into the channels, in order to accurately emulate the transfer
     // even in that case, we must figure out in which order the registers should be read and
     // written here. The code below accesses the registers in no particular order.
@@ -1865,54 +1883,191 @@ fn process_dma(emu: &mut Snes) -> StepResult {
     // FIXME: What exactly happens when the last unit is only written partially?
 
     let idx = emu.cpu.mdmaen.trailing_zeros() as usize;
-    let mut channel = &mut emu.dma.channels[idx];
 
-    if channel.das > 0 {
-        let offset = emu.cpu.dma_counter >> 1;
-
-        match channel.dmap.transfer_unit_select() {
-            super::dma::TransferUnitSelect::WO2Bytes2Regs
-            | super::dma::TransferUnitSelect::WO4Bytes2Regs => {
-                emu.cpu.dma_counter ^= 2;
-            }
-            super::dma::TransferUnitSelect::WT4Bytes2Regs
-            | super::dma::TransferUnitSelect::WT4Bytes2RegsAgain => {
-                emu.cpu.dma_counter = (emu.cpu.dma_counter + 1) & 0x03;
-            }
-            super::dma::TransferUnitSelect::WO4Bytes4Regs => {
-                emu.cpu.dma_counter = (emu.cpu.dma_counter + 2) & 0x7;
-            }
-            _ => (),
-        };
-
-        let mut src_addr = (channel.a1b as u32) << 16 | (channel.a1t as u32);
-        let mut dst_addr = 0x2100 | ((channel.bbad + offset) as u32);
-
-        if channel.dmap.transfer_direction() == super::dma::TransferDirection::BToA {
-            std::mem::swap(&mut src_addr, &mut dst_addr);
-        }
-
-        // FIXME: Differentiate between A & B bus
-        let byte = read(emu, src_addr);
-        write(emu, dst_addr, byte);
-
-        channel = &mut emu.dma.channels[idx];
-
-        match channel.dmap.a_bus_address_step() {
-            super::dma::ABusAddressStep::Increment => channel.a1t = channel.a1t.wrapping_add(1),
-            super::dma::ABusAddressStep::Decrement => channel.a1t = channel.a1t.wrapping_sub(1),
-            _ => (),
-        }
-
-        channel.das -= 1;
+    if emu.dma.channels[idx].das > 0 {
+        gdma_transfer(emu, idx);
     }
 
-    if channel.das == 0 {
-        emu.cpu.dma_counter = 0;
-        emu.cpu.mdmaen ^= 1 << idx;
+    if emu.dma.channels[idx].das == 0 {
+        emu.cpu.mdmaen &= emu.cpu.mdmaen - 1;
     }
 
     StepResult::Stepped
+}
+
+fn reload_hdma(emu: &mut Snes) {
+    let mut hdma_channels = emu.cpu.hdmaen;
+    while hdma_channels != 0 {
+        let i = hdma_channels.trailing_zeros() as usize;
+        hdma_channels &= hdma_channels - 1;
+
+        let channel = &mut emu.dma.channels[i];
+
+        channel.a2a = channel.a1t;
+
+        let table_addr = channel.next_address();
+        emu.cpu.cycles += 8;
+        let ntrl = read_with_cycle_counting(emu, table_addr, false);
+
+        let channel = &mut emu.dma.channels[i];
+        channel.ntrl = ntrl;
+
+        if channel.dmap.addressing_mode == super::dma::AddressingMode::IndirectTable {
+            let das_addr_l = channel.next_address();
+            let das_addr_h = channel.next_address();
+            emu.cpu.cycles += 8;
+            let dasl = read_with_cycle_counting(emu, das_addr_l, false);
+            emu.cpu.cycles += 8;
+            let dash = read_with_cycle_counting(emu, das_addr_h, false);
+            emu.dma.channels[i].das = (dash as u16) << 8 | (dasl as u16);
+        }
+
+        let mask = 1 << i;
+        if ntrl != 0 {
+            emu.dma.paused &= !mask;
+            emu.dma.stopped &= !mask;
+        } else {
+            emu.dma.paused |= mask;
+            emu.dma.stopped |= mask;
+        }
+    }
+}
+
+fn process_hdma(emu: &mut Snes) {
+    // NOTE: The SNES first performs the transfers for all HDMA enabled channels and only after all
+    // channels were serviced, does it advance the channels. We also perform both seperately since
+    // an HDMA channel could in theory transfer data from itself or other channels, which would not
+    // be emulated correctly if we processed each channel wholly before continuing to the next one.
+
+    // Perform transfers
+    let mut hdma_channels = emu.cpu.hdmaen & !emu.dma.paused;
+    while hdma_channels != 0 {
+        let i = hdma_channels.trailing_zeros() as usize;
+        hdma_channels &= hdma_channels - 1;
+        hdma_transfer(emu, i);
+    }
+
+    // Advance channels
+    hdma_channels = emu.cpu.hdmaen & !emu.dma.stopped;
+    while hdma_channels != 0 {
+        let i = hdma_channels.trailing_zeros() as usize;
+        hdma_channels &= hdma_channels - 1;
+        let channel = &mut emu.dma.channels[i];
+
+        channel.ntrl = channel.ntrl.wrapping_sub(1);
+        emu.dma.paused |= (!channel.ntrl & 0x80) >> (7 - i);
+
+        if channel.ntrl & 0x7F == 0 {
+            let ntrl_addr = channel.next_address();
+            emu.cpu.cycles += 8;
+            let ntrl = read_with_cycle_counting(emu, ntrl_addr, false);
+            let channel = &mut emu.dma.channels[i];
+            channel.ntrl = ntrl;
+
+            if channel.dmap.addressing_mode == super::dma::AddressingMode::IndirectTable {
+                let das_addr_l = channel.next_address();
+                let das_addr_h = channel.next_address();
+                emu.cpu.cycles += 8;
+                let dasl = read_with_cycle_counting(emu, das_addr_l, false);
+                emu.cpu.cycles += 8;
+                let dash = read_with_cycle_counting(emu, das_addr_h, false);
+                emu.dma.channels[i].das = (dash as u16) << 8 | (dasl as u16);
+            }
+
+            if ntrl == 0 {
+                emu.dma.stopped |= 1 << i;
+            } else {
+                emu.dma.paused &= !(1 << i);
+            }
+        }
+    }
+
+    emu.dma.paused |= emu.dma.stopped;
+}
+
+#[derive(Clone, Copy)]
+struct DmaPattern {
+    step: u8,
+    mask: u8,
+    count: u16,
+}
+
+impl DmaPattern {
+    fn from_transfer_unit_select(tus: TransferUnitSelect) -> Self {
+        let (step, mask, count) = match tus {
+            TransferUnitSelect::WO1Bytes1Regs => (0, 0, 1),
+            TransferUnitSelect::WO2Bytes2Regs => (2, 2, 2),
+            TransferUnitSelect::WT2Bytes1Regs | TransferUnitSelect::WT2Bytes1RegsAgain => (0, 0, 2),
+            TransferUnitSelect::WT4Bytes2Regs | TransferUnitSelect::WT4Bytes2RegsAgain => (1, 3, 4),
+            TransferUnitSelect::WO4Bytes4Regs => (2, 6, 4),
+            TransferUnitSelect::WO4Bytes2Regs => (2, 2, 4),
+        };
+
+        Self { step, mask, count }
+    }
+}
+
+fn gdma_transfer(emu: &mut Snes, channel_idx: usize) {
+    let channel = &emu.dma.channels[channel_idx];
+    let tus = channel.dmap.transfer_unit_select;
+    let pattern = DmaPattern::from_transfer_unit_select(tus);
+
+    let mut offset = 0;
+    for _ in 0..u16::min(pattern.count, channel.das) {
+        let channel = &mut emu.dma.channels[channel_idx];
+
+        let mut src_addr = (channel.a1b as u32) << 16 | (channel.a1t as u32);
+        let mut dst_addr = 0x2100 | ((channel.bbad.wrapping_add(offset >> 1)) as u32);
+
+        if channel.dmap.transfer_direction == super::dma::TransferDirection::BToA {
+            std::mem::swap(&mut src_addr, &mut dst_addr);
+        }
+
+        offset = (offset + pattern.step) & pattern.mask;
+
+        match channel.dmap.a_bus_address_step {
+            ABusAddressStep::Increment => channel.a1t = channel.a1t.wrapping_add(1),
+            ABusAddressStep::Decrement => channel.a1t = channel.a1t.wrapping_sub(1),
+            ABusAddressStep::Fixed1 | ABusAddressStep::Fixed2 => (),
+        }
+
+        channel.das -= 1;
+
+        emu.cpu.cycles += 8;
+        let byte = read_with_cycle_counting(emu, src_addr, false);
+        write_with_cycle_counting(emu, dst_addr, byte, false);
+    }
+}
+
+fn hdma_transfer(emu: &mut Snes, channel_idx: usize) {
+    let tus = emu.dma.channels[channel_idx].dmap.transfer_unit_select;
+    let pattern = DmaPattern::from_transfer_unit_select(tus);
+
+    let mut offset = 0;
+    for _ in 0..pattern.count {
+        let channel = &mut emu.dma.channels[channel_idx];
+
+        let mut src_addr = match channel.dmap.addressing_mode {
+            super::dma::AddressingMode::DirectTable => channel.next_address(),
+            super::dma::AddressingMode::IndirectTable => {
+                let addr = (channel.dasb as u32) << 16 | (channel.das as u32);
+                channel.das = channel.das.wrapping_add(1);
+                addr
+            }
+        };
+
+        let mut dst_addr = 0x2100 | ((channel.bbad.wrapping_add(offset >> 1)) as u32);
+
+        if channel.dmap.transfer_direction == super::dma::TransferDirection::BToA {
+            std::mem::swap(&mut src_addr, &mut dst_addr);
+        }
+
+        offset = (offset + pattern.step) & pattern.mask;
+
+        emu.cpu.cycles += 8;
+        let byte = read_with_cycle_counting(emu, src_addr, false);
+        write_with_cycle_counting(emu, dst_addr, byte, false);
+    }
 }
 
 #[cold]
@@ -1943,7 +2098,7 @@ fn process_interrupt(emu: &mut Snes) {
 
 fn do_step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
     if emu.cpu.mdmaen != 0 {
-        return process_dma(emu);
+        return process_gdma(emu);
     }
 
     if emu.cpu.stopped {
@@ -2365,7 +2520,11 @@ fn run_timer(emu: &mut Snes) {
             }
         }
 
-        // TODO: Trigger HDMA somewhere after this point probably idk
+        match (emu.cpu.h_counter, emu.cpu.v_counter) {
+            (4, 0) => reload_hdma(emu),
+            (278, 0..225) => process_hdma(emu),
+            _ => (),
+        }
 
         let hblank = emu.cpu.h_counter < 22 || emu.cpu.h_counter > 277;
         let vblank = emu.cpu.v_counter < 1 || emu.cpu.v_counter > height;
