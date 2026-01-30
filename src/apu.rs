@@ -20,6 +20,7 @@ pub struct Apu {
     pub rom_enable: bool,
     pub ram: Box<[u8; 0x10000]>,
     reset: bool,
+    pub timers: [Timer; 3],
 
     pub a: u8,
     pub x: u8,
@@ -28,6 +29,8 @@ pub struct Apu {
     pub psw: Psw,
     pub pc: u16,
     cycles: u64,
+    cycles_8khz_clock: u64,
+    cycles_64khz_clock: u64,
     stopped: bool,
 }
 
@@ -39,6 +42,7 @@ impl Default for Apu {
             rom_enable: true,
             ram: Box::new([0; 0x10000]),
             reset: false,
+            timers: [Timer::default(); 3],
 
             a: 0,
             x: 0,
@@ -47,6 +51,8 @@ impl Default for Apu {
             psw: Psw::default(),
             pc: 0,
             cycles: 0,
+            cycles_8khz_clock: 0,
+            cycles_64khz_clock: 0,
             stopped: false,
         }
     }
@@ -201,6 +207,14 @@ impl Target for AddressingMode {
     }
 }
 
+#[derive(Default, Clone, Copy)]
+pub struct Timer {
+    pub enabled: bool,
+    pub divider: u8,
+    pub out: u8,
+    counter: u8,
+}
+
 impl Apu {
     pub fn cpu_read_pure(&self, addr: u16) -> Option<u8> {
         Some(self.cpuio_out[usize::from(addr - 0x2140)])
@@ -224,26 +238,73 @@ impl Apu {
             0x00F5 => self.cpuio_in[1],
             0x00F6 => self.cpuio_in[2],
             0x00F7 => self.cpuio_in[3],
+            0x00FD => self.timers[0].out,
+            0x00FE => self.timers[1].out,
+            0x00FF => self.timers[2].out,
             0xFFC0..=0xFFFF if self.rom_enable => BOOT_ROM[usize::from(addr - 0xFFC0)],
             _ => self.ram[usize::from(addr)],
         }
     }
 
     fn read(&mut self, addr: u16) -> u8 {
-        self.read_pure(addr)
+        self.run_timers();
+        match addr {
+            0x00F4 => self.cpuio_in[0],
+            0x00F5 => self.cpuio_in[1],
+            0x00F6 => self.cpuio_in[2],
+            0x00F7 => self.cpuio_in[3],
+            0x00FD => {
+                let value = self.timers[0].out;
+                self.timers[0].out = 0;
+                value
+            }
+            0x00FE => {
+                let value = self.timers[1].out;
+                self.timers[1].out = 0;
+                value
+            }
+            0x00FF => {
+                let value = self.timers[2].out;
+                self.timers[2].out = 0;
+                value
+            }
+            0xFFC0..=0xFFFF if self.rom_enable => BOOT_ROM[usize::from(addr - 0xFFC0)],
+            _ => self.ram[usize::from(addr)],
+        }
     }
 
     pub fn write(&mut self, addr: u16, value: u8) {
+        self.run_timers();
         self.ram[usize::from(addr)] = value;
         match addr {
             0x00F0 => todo!(),
             0x00F1 => {
+                for (i, timer) in self.timers.iter_mut().enumerate() {
+                    let enabled = (value >> i) & 0x01 != 0;
+                    if timer.enabled == enabled {
+                        continue;
+                    }
+                    timer.enabled = enabled;
+                    if !enabled {
+                        timer.out = 0;
+                        timer.counter = 0;
+                    }
+                }
+                if value & 0x10 != 0 {
+                    self.cpuio_in[0..=1].fill(0);
+                }
+                if value & 0x20 != 0 {
+                    self.cpuio_in[2..=3].fill(0);
+                }
                 self.rom_enable = value & 0x80 != 0;
             }
             0x00F4 => self.cpuio_out[0] = value,
             0x00F5 => self.cpuio_out[1] = value,
             0x00F6 => self.cpuio_out[2] = value,
             0x00F7 => self.cpuio_out[3] = value,
+            0x00FA => self.timers[0].divider = value,
+            0x00FB => self.timers[1].divider = value,
+            0x00FC => self.timers[2].divider = value,
             _ => (),
         }
     }
@@ -887,6 +948,32 @@ impl Apu {
         self.psw.i = false;
     }
 
+    fn run_timers(&mut self) {
+        while self.cycles_8khz_clock < self.cycles {
+            self.cycles_8khz_clock += 3072;
+
+            for timer in &mut self.timers[0..=1] {
+                timer.counter = timer.counter.wrapping_add(1);
+                if timer.counter == timer.divider {
+                    timer.counter = 0;
+                    timer.out = (timer.out + 1) & 0x0F;
+                }
+            }
+        }
+
+        while self.cycles_64khz_clock < self.cycles {
+            self.cycles_64khz_clock += 384;
+
+            let timer = &mut self.timers[2];
+            timer.counter = timer.counter.wrapping_add(1);
+            if timer.counter == timer.divider {
+                timer.counter = 0;
+                timer.out = (timer.out + 1) & 0x0F;
+            }
+        }
+    }
+
+
     #[rustfmt::skip]
     fn step(&mut self) {
         if self.reset {
@@ -896,14 +983,15 @@ impl Apu {
             let pc_ll = self.read(0xFFFE) as u16;
             let pc_hh = self.read(0xFFFF) as u16;
             self.pc = pc_hh << 8 | pc_ll;
+            self.cycles = 0;
             self.reset = false;
         }
+
+        self.cycles += 24;
 
         if self.stopped {
             return;
         }
-
-        self.cycles += 24;
 
         let opcode = self.next_instr_byte();
 
@@ -1203,6 +1291,7 @@ pub fn catch_up(emu: &mut Snes) {
     while emu.apu.cycles < emu.cpu.cycles() {
         emu.apu.step();
     }
+    emu.apu.run_timers();
 }
 
 pub mod disasm {
