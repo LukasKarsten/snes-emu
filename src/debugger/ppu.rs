@@ -1,4 +1,4 @@
-use arbitrary_int::{u3, u4, u6, Number};
+use arbitrary_int::{traits::Integer, u3, u4, u6};
 use egui::Widget;
 use egui_memory_editor::MemoryEditor;
 
@@ -11,7 +11,7 @@ impl super::Tab for PpuMiscTab {
     }
 
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
-        fn drag_value<UT: egui::emath::Numeric, T: Number<UnderlyingType = UT> + Copy>(
+        fn drag_value<UT: egui::emath::Numeric, T: Integer<UnderlyingType = UT> + Copy>(
             value: &mut T,
             label: &str,
             ui: &mut egui::Ui,
@@ -487,7 +487,7 @@ fn compute_vram_image(vram: &[u8], bpp: u8) -> egui::ColorImage {
         _ => panic!("invalid number of bits per pixel"),
     };
 
-    let mut image = egui::ColorImage::new(image_size, egui::Color32::TRANSPARENT);
+    let mut image = egui::ColorImage::filled(image_size, egui::Color32::TRANSPARENT);
 
     let bytes_per_sprite = (bpp as usize) * 8;
     let num_sprites = vram.len() / bytes_per_sprite;

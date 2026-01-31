@@ -1,4 +1,4 @@
-use arbitrary_int::*;
+use arbitrary_int::{traits::Integer, *};
 
 use crate::Snes;
 
@@ -337,7 +337,7 @@ impl Default for Ppu {
             screens: Screens::default(),
 
             inidisp_forced_blanking: true,
-            inidisp_master_brightness: u4::MAX,
+            inidisp_master_brightness: Integer::MAX,
             obsel_size_selection: OBSELSizeSelection::Small8x8Large16x16,
             obsel_gap: u2::new(0),
             obsel_base_address: u3::new(0),

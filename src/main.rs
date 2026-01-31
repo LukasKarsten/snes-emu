@@ -264,7 +264,7 @@ impl Default for AppState {
 impl AppState {
     fn view(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu-bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| self.menu_bar(ui));
+            egui::containers::menu::MenuBar::new().ui(ui, |ui| self.menu_bar(ui));
         });
 
         let Some(emu_state) = &mut self.emulation_state else {

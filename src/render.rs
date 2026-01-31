@@ -15,8 +15,8 @@ impl Renderer {
     pub fn new(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let backends = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::PRIMARY);
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY);
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends,
             ..Default::default()
         });
@@ -34,7 +34,7 @@ impl Renderer {
                 .expect("no suitable adapter found");
 
             let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .expect("failed to create device");
 
@@ -64,7 +64,11 @@ impl Renderer {
             view_formats: vec![surface_format],
         };
 
-        let mut egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
+        let mut egui_renderer = egui_wgpu::Renderer::new(
+            &device,
+            surface_format,
+            egui_wgpu::RendererOptions::default(),
+        );
         let game_view_resources = GameViewResources::new(&device, surface_format);
         egui_renderer.callback_resources.insert(game_view_resources);
 
@@ -134,6 +138,7 @@ impl Renderer {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,

@@ -13,7 +13,7 @@ impl super::debugger::Tab for GameView {
         egui::Frame::dark_canvas(ui.style())
             .stroke(egui::Stroke::NONE)
             .shadow(egui::epaint::Shadow::NONE)
-            .rounding(egui::Rounding::ZERO)
+            .corner_radius(0)
             .show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(
                     ui.available_size(),
@@ -225,14 +225,14 @@ impl egui_wgpu::CallbackTrait for GameRenderCallback {
         );
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &resources.display_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             current_image.pixels_rgba(),
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(512 * 4),
                 rows_per_image: None,
