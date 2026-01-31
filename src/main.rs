@@ -21,8 +21,6 @@ mod debugger;
 mod game_view;
 mod render;
 
-tracy_client::register_demangler!();
-
 fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
@@ -87,8 +85,6 @@ impl ApplicationHandler for App {
 
         const TIMER_PERIOD: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
-        tracy_client::secondary_frame_mark!("frame timer");
-
         let Some(emu_state) = &mut self.state.emulation_state else {
             return;
         };
@@ -103,7 +99,6 @@ impl ApplicationHandler for App {
         };
 
         {
-            let _span = tracy_client::span!("run emulation");
             let hit_breakpoint = emu_state.snes.run();
 
             if hit_breakpoint {
@@ -117,8 +112,6 @@ impl ApplicationHandler for App {
                 let mut current_image = emu_state.current_image.lock().unwrap();
                 *current_image = output_image.clone();
             }
-
-            tracy_client::frame_mark();
         }
 
         *next_frame_time += TIMER_PERIOD;
@@ -190,8 +183,6 @@ impl ActiveState {
             return;
         }
         self.needs_redraw = false;
-
-        let _span = tracy_client::span!("draw");
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let ctx = self.egui_state.egui_ctx();
