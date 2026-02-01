@@ -83,8 +83,9 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.surface_config.width = width;
-        self.surface_config.height = height;
+        let limits = self.device.limits();
+        self.surface_config.width = width.clamp(1, limits.max_texture_dimension_2d);
+        self.surface_config.height = height.clamp(1, limits.max_texture_dimension_2d);
         self.reconfigure_surface = true;
     }
 
