@@ -69,10 +69,7 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                active.renderer.resize(size.width, size.height);
-                _ = active.window.request_inner_size(size);
-            }
+            WindowEvent::Resized(size) => active.renderer.resize(size.width, size.height),
             WindowEvent::RedrawRequested => active.needs_redraw = true,
             _ => (),
         }
