@@ -443,7 +443,7 @@ impl AppState {
         let proxy = self.event_loop_proxy.clone();
         let pick_rom_future = async move {
             let handle = rfd::AsyncFileDialog::new()
-                .add_filter("SNES ROM", &["sfc", "smc"])
+                .add_filter("SNES ROM", &["sfc", "smc", "SFC", "SMC"])
                 .pick_file()
                 .await;
 
