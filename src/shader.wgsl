@@ -30,6 +30,10 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(display_texture, display_sampler, in.uv);
-    return color * (255.0 / 31.0);
+    var pixel = textureSample(display_texture, display_sampler, in.uv);
+
+    let brightness = (pixel.a * 255.0 + 1.0) / 16.0;
+    let color = pixel.rgb * (255.0 / 31.0);
+
+    return vec4(color * brightness , 1.0);
 }

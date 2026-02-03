@@ -204,20 +204,18 @@ struct OutputColor {
     red: u8,
     green: u8,
     blue: u8,
-    // NOTE: this is always `255`. This field just exists so we can send this struct directly to
-    // the GPU as RGBA.
-    alpha: u8,
+    brightness: u8,
 }
 
 impl OutputColor {
-    const BLACK: Self = Self::from_rgb(u5::new(0), u5::new(0), u5::new(0));
+    const BLACK: Self = Self::new(u5::new(0), u5::new(0), u5::new(0), u4::new(0));
 
-    const fn from_rgb(red: u5, green: u5, blue: u5) -> Self {
+    const fn new(red: u5, green: u5, blue: u5, brightness: u4) -> Self {
         Self {
             red: red.value(),
             green: green.value(),
             blue: blue.value(),
-            alpha: 255,
+            brightness: brightness.value(),
         }
     }
 }
@@ -847,6 +845,11 @@ impl Ppu {
     }
 
     fn render_pixel(&self, x: u16, y: u16) -> OutputColor {
+        let master_brightness = self.inidisp_master_brightness;
+        if master_brightness == u4::ZERO {
+            return OutputColor::BLACK;
+        }
+
         let mode = self.backgrounds.mode.value();
         if mode == 7 {
             todo!()
@@ -907,7 +910,7 @@ impl Ppu {
         };
 
         if !math_enabled {
-            return OutputColor::from_rgb(main_color.r, main_color.g, main_color.b);
+            return OutputColor::new(main_color.r, main_color.g, main_color.b, master_brightness);
         }
 
         let enable_sub_screen = enable_screen_lut[usize::from(self.windows.sub_screen_black as u8)];
@@ -947,10 +950,11 @@ impl Ppu {
 
         output = output.map(|v| v.clamp(0x00, 0x1F));
 
-        OutputColor::from_rgb(
+        OutputColor::new(
             u5::extract_u8(output[0] as u8, 0),
             u5::extract_u8(output[1] as u8, 0),
             u5::extract_u8(output[2] as u8, 0),
+            master_brightness,
         )
     }
 
