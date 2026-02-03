@@ -1,8 +1,7 @@
 use std::{
-    path::Path,
     process::ExitCode,
     sync::{Arc, Mutex, RwLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use debugger::Debugger;
@@ -10,11 +9,12 @@ use game_view::GameView;
 use render::Renderer;
 use snes_emu::{cpu::MappingMode, Snes};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use web_time::Instant;
 use winit::{
     application::ApplicationHandler,
     event::{StartCause, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    window::{Window, WindowId},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
+    window::{Theme, Window, WindowId},
 };
 
 mod debugger;
@@ -22,34 +22,91 @@ mod game_view;
 mod render;
 
 fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
 
-    let event_loop = EventLoop::new()?;
-    let mut app = App::default();
+    let tracing_registry = tracing_subscriber::registry().with(EnvFilter::from_default_env());
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let tracing_registry = tracing_registry.with(tracing_subscriber::fmt::layer());
+
+    #[cfg(target_arch = "wasm32")]
+    let tracing_registry = tracing_registry.with(tracing_wasm::WASMLayer::default());
+
+    tracing_registry.init();
+
+    let event_loop = EventLoop::with_user_event().build()?;
+    let mut app = App {
+        active: None,
+        state: AppState::new(event_loop.create_proxy()),
+    };
 
     event_loop.run_app(&mut app)?;
     Ok(ExitCode::SUCCESS)
 }
 
-#[derive(Default)]
 struct App {
     active: Option<ActiveState>,
     state: AppState,
 }
 
-impl ApplicationHandler for App {
+enum UserEvent {
+    RomPicked(Option<Box<[u8]>>),
+    ActiveStateReady(ActiveState),
+}
+
+fn create_window(event_loop: &ActiveEventLoop) -> Result<Window, Box<dyn std::error::Error>> {
+    let window_attributes = Window::default_attributes().with_title("SNES Emulator");
+
+    #[cfg(target_arch = "wasm32")]
+    let window_attributes = {
+        use web_sys::{wasm_bindgen::JsCast, HtmlCanvasElement};
+        use winit::platform::web::WindowAttributesExtWebSys;
+
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        let element = document
+            .get_element_by_id("canvas")
+            .expect("No element with id 'canvas' found");
+        let canvas: HtmlCanvasElement = element
+            .dyn_into()
+            .expect("Element with id 'canvas' is not a canvas");
+
+        window_attributes.with_canvas(Some(canvas))
+    };
+
+    Ok(event_loop.create_window(window_attributes)?)
+}
+
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.active.is_none() {
-            match ActiveState::new(event_loop) {
-                Ok(active) => self.active = Some(active),
-                Err(err) => {
-                    tracing::error!("Failed to activate application: {err}");
-                }
-            }
+        if self.active.is_some() {
+            return;
         }
+
+        let window = match create_window(event_loop) {
+            Ok(window) => Arc::new(window),
+            Err(err) => {
+                tracing::error!("Failed to create window: {err}");
+                return;
+            }
+        };
+
+        let system_theme = event_loop.system_theme();
+
+        let proxy = self.state.event_loop_proxy.clone();
+        let future = async move {
+            match ActiveState::new(window, system_theme).await {
+                Ok(active) => _ = proxy.send_event(UserEvent::ActiveStateReady(active)),
+                Err(err) => tracing::error!("Failed to activate application: {err}"),
+            }
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        pollster::block_on(future);
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(future);
     }
 
     fn suspended(&mut self, _: &ActiveEventLoop) {
@@ -141,6 +198,24 @@ impl ApplicationHandler for App {
             Some(next_frame_time) => ControlFlow::WaitUntil(next_frame_time),
         });
     }
+
+    fn user_event(&mut self, _: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::RomPicked(rom) => {
+                self.state.rom_picker_open = false;
+                if let Some(rom) = rom {
+                    self.state.load_rom(rom);
+                }
+            }
+            UserEvent::ActiveStateReady(mut active_state) => {
+                // Set initial window size here, since we need to yield to the event loop at least
+                // once after creating the window, otherwise the size may be 0x0.
+                let size = active_state.window.inner_size();
+                active_state.renderer.resize(size.width, size.height);
+                self.active = Some(active_state);
+            }
+        }
+    }
 }
 
 struct ActiveState {
@@ -151,11 +226,11 @@ struct ActiveState {
 }
 
 impl ActiveState {
-    fn new(elwt: &ActiveEventLoop) -> Result<Self, Box<dyn std::error::Error>> {
-        let window_attributes = Window::default_attributes().with_title("SNES Emulator");
-        let window = Arc::new(elwt.create_window(window_attributes)?);
-
-        let renderer = Renderer::new(Arc::clone(&window))?;
+    async fn new(
+        window: Arc<Window>,
+        system_theme: Option<Theme>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let renderer = Renderer::new(Arc::clone(&window)).await?;
 
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -163,7 +238,7 @@ impl ActiveState {
             egui::ViewportId::ROOT,
             &window,
             Some(window.scale_factor() as f32),
-            elwt.system_theme(),
+            system_theme,
             None,
         );
 
@@ -237,28 +312,30 @@ struct Input {
 }
 
 struct AppState {
+    event_loop_proxy: EventLoopProxy<UserEvent>,
     emulation_state: Option<EmulationState>,
     debugger: Debugger,
     show_debugger: bool,
     should_exit: bool,
     next_frame_time: Option<Instant>,
     current_input: Arc<RwLock<Input>>,
+    rom_picker_open: bool,
 }
 
-impl Default for AppState {
-    fn default() -> Self {
+impl AppState {
+    fn new(event_loop_proxy: EventLoopProxy<UserEvent>) -> Self {
         Self {
+            event_loop_proxy,
             emulation_state: None,
             debugger: Debugger::default(),
             show_debugger: cfg!(debug_assertions),
             should_exit: false,
             next_frame_time: None,
             current_input: Arc::new(RwLock::new(Input::default())),
+            rom_picker_open: false,
         }
     }
-}
 
-impl AppState {
     fn view(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu-bar").show(ctx, |ui| {
             egui::containers::menu::MenuBar::new().ui(ui, |ui| self.menu_bar(ui));
@@ -307,11 +384,12 @@ impl AppState {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("File", |ui| {
-            if ui.button("Open ROM").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_file() {
-                    self.load_rom(&path);
+            ui.add_enabled_ui(!self.rom_picker_open, |ui| {
+                if ui.button("Open ROM").clicked() {
+                    self.open_rom_picker();
                 }
-            }
+            });
+            #[cfg(not(target_arch = "wasm32"))]
             if ui.button("Exit").clicked() {
                 self.should_exit = true;
             }
@@ -357,9 +435,37 @@ impl AppState {
         }
     }
 
-    fn load_rom(&mut self, path: &Path) {
-        let rom = std::fs::read(path).expect("Failed to load ROM");
-        let mut snes = Snes::new(rom.into_boxed_slice(), MappingMode::LoRom);
+    fn open_rom_picker(&mut self) {
+        if self.rom_picker_open {
+            return;
+        }
+
+        let proxy = self.event_loop_proxy.clone();
+        let pick_rom_future = async move {
+            let handle = rfd::AsyncFileDialog::new()
+                .add_filter("SNES ROM", &["sfc", "smc"])
+                .pick_file()
+                .await;
+
+            let rom = match handle {
+                Some(handle) => Some(handle.read().await.into()),
+                None => None,
+            };
+
+            _ = proxy.send_event(UserEvent::RomPicked(rom));
+        };
+
+        self.rom_picker_open = true;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(|| pollster::block_on(pick_rom_future));
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(pick_rom_future);
+    }
+
+    fn load_rom(&mut self, rom: Box<[u8]>) {
+        let mut snes = Snes::new(rom, MappingMode::LoRom);
         let current_input = Arc::clone(&self.current_input);
         snes.set_input1(Some(Box::new(snes_emu::input::Joypad::new(move || {
             let current_input = current_input.read().unwrap();

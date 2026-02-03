@@ -12,10 +12,21 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(
+    pub async fn new(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY);
+        #[cfg(not(target_arch = "wasm32"))]
+        let default_backends = wgpu::Backends::PRIMARY;
+
+        #[cfg(target_arch = "wasm32")]
+        let default_backends = if wgpu::util::is_browser_webgpu_supported().await {
+            wgpu::Backends::BROWSER_WEBGPU
+        } else {
+            wgpu::Backends::GL
+        };
+
+        let backends = wgpu::Backends::from_env().unwrap_or(default_backends);
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends,
             ..Default::default()
@@ -23,35 +34,33 @@ impl Renderer {
 
         let surface = instance.create_surface(target)?;
 
-        let (adapter, device, queue) = pollster::block_on(async {
-            let adapter = instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: Some(&surface),
-                    force_fallback_adapter: false,
-                })
-                .await
-                .expect("no suitable adapter found");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .expect("no suitable adapter found");
 
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor::default())
-                .await
-                .expect("failed to create device");
-
-            (adapter, device, queue)
-        });
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                ..Default::default()
+            })
+            .await
+            .expect("failed to create device");
 
         let surface_capabilities = surface.get_capabilities(&adapter);
+
         let surface_format = surface_capabilities
             .formats
             .iter()
             .copied()
-            .find(|format| format.is_srgb())
+            .filter(|format| device.features().contains(format.required_features()))
+            .find(|format| !format.is_srgb())
             .unwrap_or_else(|| surface_capabilities.formats[0]);
-
-        // FIXME: Figure this out
-        let _ = surface_format;
-        let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

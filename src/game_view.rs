@@ -188,6 +188,7 @@ impl GameViewResources {
 #[repr(C)]
 struct UniformData {
     image_extent: [f32; 2],
+    padding: [u32; 2],
 }
 
 struct GameRenderCallback {
@@ -216,6 +217,7 @@ impl egui_wgpu::CallbackTrait for GameRenderCallback {
                 1.0,
                 image_height as f32 / snes_emu::OutputImage::MAX_HEIGHT as f32,
             ],
+            padding: [0; 2],
         };
 
         queue.write_buffer(

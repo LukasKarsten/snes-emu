@@ -1,5 +1,5 @@
 struct UniformData {
-    image_extent: vec2<f32>,
+    @size(16) image_extent: vec2<f32>,
 }
 
 @group(0) @binding(0)
@@ -22,7 +22,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
     var out = VertexOutput();
     out.position = vec4(pos * 4.0 - 1.0, 0.0, 1.0);
-    out.uv = pos  * 2.0;
+    out.uv = pos * 2.0;
     out.uv.y = 1.0 - out.uv.y;
     out.uv = out.uv * uniform_data.image_extent;
     return out;

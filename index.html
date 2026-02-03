@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" value="width=device-width,initial-scale=1">
+		<title>SNES Emulator</title>
+		<style>
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				font-family: sans-serif;
+				overflow: hidden;
+				width: 100dvw;
+				height: 100dvh;
+			}
+
+			#canvas {
+				width: 100%;
+				height: 100%;
+			}
+
+			p {
+				margin-top: 0;
+			}
+
+			.modal {
+				position: absolute;
+				inset: 0;
+				margin: auto;
+				padding: 1em 1.5em;
+				width: fit-content;
+				height: fit-content;
+				border-radius: .5em;
+			}
+
+			.modal--error {
+				background: #FFA49A;
+				border: 2px solid #D24B47;
+			}
+		</style>
+	</head>
+	<body>
+		<noscript>
+			<div class="modal modal--error">
+				<p><strong>This Website requires JavaScript</strong></p>
+				Please make sure it is enabled in your browser.
+			</div>
+		</noscript>
+		<canvas id="canvas"></canvas>
+	</body>
+</html>
