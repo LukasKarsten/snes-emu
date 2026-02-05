@@ -190,6 +190,17 @@ pub struct Screens {
     pub backdrop_blue: u5,
 }
 
+#[derive(Default, Clone, Copy)]
+struct ScanlineObjectTile {
+    x: u16,
+    tile_y_off: u8,
+    tile_addr: u16,
+    x_flip: bool,
+    y_flip: bool,
+    palette: u8,
+    priority: u8,
+}
+
 const LAYER_BG1: u8 = 0;
 const LAYER_BG2: u8 = 1;
 const LAYER_BG3: u8 = 2;
@@ -309,6 +320,7 @@ pub struct Ppu {
     pub opvct: u16,
     pub stat77: u8,
     pub stat78: u8,
+
     ////////////////////////////////////////////////////////////////////////////
     // internal
     pub oam: Box<[u8; 0x220]>,
@@ -320,6 +332,8 @@ pub struct Ppu {
     m7_old: u8,
     ophct_selector: u8,
     opvct_selector: u8,
+    current_object_tiles: [ScanlineObjectTile; 34],
+    current_object_tiles_len: usize,
 
     pub(super) cycles: u64,
     pub(super) hpos: u16,
@@ -383,6 +397,8 @@ impl Default for Ppu {
             m7_old: 0,
             ophct_selector: 0,
             opvct_selector: 0,
+            current_object_tiles: [ScanlineObjectTile::default(); 34],
+            current_object_tiles_len: 0,
 
             cycles: 0,
             hpos: 0,
@@ -844,6 +860,106 @@ impl Ppu {
         &self.output
     }
 
+    fn prepare_objects(&mut self, y: u8) {
+        let sizes: [(u8, u8); 2] = match self.obsel_size_selection {
+            OBSELSizeSelection::Small8x8Large16x16 => [(8, 8), (16, 16)],
+            OBSELSizeSelection::Small8x8Large32x32 => [(8, 8), (32, 32)],
+            OBSELSizeSelection::Small8x8Large64x64 => [(8, 8), (64, 64)],
+            OBSELSizeSelection::Small16x16Large32x32 => [(16, 16), (32, 32)],
+            OBSELSizeSelection::Small16x16Large64x64 => [(16, 16), (32, 32)],
+            OBSELSizeSelection::Small32x32Large64x64 => [(32, 32), (64, 64)],
+            OBSELSizeSelection::Small16x32Large32x64 => [(16, 32), (32, 64)],
+            OBSELSizeSelection::Small16x32Large32x32 => [(16, 32), (32, 32)],
+        };
+
+        const MAX_OBJECTS: u32 = 32;
+        let mut num_objects = 0;
+        let mut num_tiles = 0;
+
+        'iterate_objects: for i in 0..128 {
+            let entry = &self.oam[i * 4..][..4];
+            let flags1 = entry[3];
+            let flags2 = self.oam[512 + i / 4] >> (i % 4 * 2);
+
+            let obj_x = (entry[0] as u16) | (flags2 as u16 & 0x01) << 8;
+            let obj_y = entry[1];
+            let name_table = flags1 as u16 & 0x01;
+            let tile_number = entry[2];
+            let palette = flags1 >> 1 & 0x07;
+            let priority = flags1 >> 4 & 0x03;
+            let x_flip = flags1 >> 6 & 0x01 != 0;
+            let y_flip = flags1 >> 7 & 0x01 != 0;
+            let size_flag = flags2 >> 1 & 0x01;
+
+            let (width, height) = sizes[usize::from(size_flag)];
+
+            let in_range_y = y.wrapping_sub(obj_y) < height;
+            let in_range_x = obj_x > 511 - width as u16 || obj_x <= 255;
+            if !in_range_y || !in_range_x {
+                continue;
+            }
+
+            num_objects += 1;
+            if num_objects > MAX_OBJECTS {
+                self.stat77 |= 1 << 6;
+                break;
+            }
+
+            if num_tiles >= self.current_object_tiles.len() {
+                // If the previous object filled to tiles array exactly, the time overflow flag
+                // would not have been set yet, and since we would be adding at least one tile now,
+                // we need to set the flag here too.
+                self.stat77 |= 1 << 7;
+                continue;
+            }
+
+            let mut tilemap_addr = self.obsel_base_address.as_u16() << 13;
+            if name_table == 1 {
+                tilemap_addr += 4096; // size of first tilemap
+                tilemap_addr += self.obsel_gap.as_u16() << 12;
+            }
+
+            let mut y_off = y.wrapping_sub(obj_y);
+            if y_flip {
+                y_off = height - 1 - y_off;
+            }
+
+            let mut tile_row = tile_number & 0xF0;
+            let mut tile_col = tile_number & 0x0F;
+
+            tile_row = tile_row.wrapping_add(y_off / 8 * 0x10);
+
+            for mut x_off in (0..width).step_by(8) {
+                if num_tiles >= self.current_object_tiles.len() {
+                    self.stat77 |= 1 << 7;
+                    continue 'iterate_objects;
+                }
+
+                let tile_offset = ((tile_row | tile_col) as u16) << 4;
+                let tile_addr = tilemap_addr.wrapping_add(tile_offset) & 0x7FFF;
+
+                if x_flip {
+                    x_off = width - 8 - x_off;
+                }
+
+                self.current_object_tiles[num_tiles] = ScanlineObjectTile {
+                    x: (obj_x + x_off as u16) & 0x1FF,
+                    tile_y_off: y.wrapping_sub(obj_y) & 0x07,
+                    tile_addr,
+                    x_flip,
+                    y_flip,
+                    palette,
+                    priority,
+                };
+                num_tiles += 1;
+
+                tile_col = (tile_col + 1) & 0x0F;
+            }
+        }
+
+        self.current_object_tiles_len = num_tiles;
+    }
+
     fn render_pixel(&self, x: u16, y: u16) -> OutputColor {
         let master_brightness = self.inidisp_master_brightness;
         if master_brightness == u4::ZERO {
@@ -1003,6 +1119,14 @@ impl Ppu {
             *color = self.get_bg_color(x, y, i, mode_def);
         }
 
+        for obj_tile in &self.current_object_tiles[..self.current_object_tiles_len] {
+            let color = self.get_object_color(obj_tile, x, mode_def);
+            if color.priority != 0 {
+                colors[LAYER_OBJ as usize] = color;
+                break;
+            }
+        }
+
         colors
     }
 
@@ -1051,7 +1175,7 @@ impl Ppu {
         mut tile_off_x: u16,
         mut tile_off_y: u16,
         bpp: u16,
-        palette_offset: u8,
+        mut palette_offset: u8,
         priorities: &[u8; 2],
     ) -> LayerColor {
         let tilemap_addr = ((bg.base_address.value() + screen) as u16) << 10; // * 1024
@@ -1083,6 +1207,59 @@ impl Ppu {
         let tiles_addr = (bg.tile_base_address.value() as u16) << 13; // * 8192
         let tile_addr = tiles_addr.wrapping_add(tile_number * bytes_per_tile);
 
+        if bpp < 8 {
+            palette_offset += palette_number << bpp;
+        }
+
+        let color = self.get_tile_color(tile_addr, tile_off_x, tile_off_y, palette_offset, bpp);
+
+        match color {
+            Some(color) => LayerColor::new(color, priorities[bg_priority as usize]),
+            None => LayerColor::TRANSPARENT,
+        }
+    }
+
+    fn get_object_color(
+        &self,
+        obj_tile: &ScanlineObjectTile,
+        x: u16,
+        mode_def: &ModeDefinition,
+    ) -> LayerColor {
+        let mut tile_off_x = x.wrapping_sub(obj_tile.x) & 0x1FF;
+        let mut tile_off_y = obj_tile.tile_y_off as u16;
+
+        if tile_off_x >= 8 {
+            return LayerColor::TRANSPARENT;
+        }
+
+        if obj_tile.x_flip {
+            tile_off_x = 7 - tile_off_x;
+        }
+        if obj_tile.y_flip {
+            tile_off_y = 7 - tile_off_y;
+        }
+
+        let tile_addr = obj_tile.tile_addr * 2;
+
+        let palette_offset = (8 + obj_tile.palette) * 16;
+        let color = self.get_tile_color(tile_addr, tile_off_x, tile_off_y, palette_offset, 4);
+
+        let priority = mode_def.obj_priorities[obj_tile.priority as usize];
+
+        match color {
+            Some(color) => LayerColor::new(color, priority),
+            None => LayerColor::TRANSPARENT,
+        }
+    }
+
+    fn get_tile_color(
+        &self,
+        tile_addr: u16,
+        tile_off_x: u16,
+        tile_off_y: u16,
+        palette_offset: u8,
+        bpp: u16,
+    ) -> Option<Color> {
         let mut palette_idx = 0;
 
         for plane_off in (0..bpp).step_by(2) {
@@ -1099,17 +1276,10 @@ impl Ppu {
         }
 
         if palette_idx == 0 {
-            return LayerColor::TRANSPARENT;
+            return None;
         }
 
-        if bpp < 8 {
-            palette_idx += palette_number << bpp;
-        }
-        palette_idx += palette_offset;
-        LayerColor::new(
-            self.get_color(palette_idx),
-            priorities[bg_priority as usize],
-        )
+        Some(self.get_color(palette_offset + palette_idx))
     }
 
     fn get_color(&self, palette_idx: u8) -> Color {
@@ -1131,7 +1301,6 @@ struct ModeDefinition {
     bpp: [u8; 4],
     palette_offset: [u8; 4],
     bg_priorities: [[u8; 2]; 4],
-    #[expect(unused)] // will be used when implementing object rendering
     obj_priorities: [u8; 4],
 }
 
@@ -1269,6 +1438,10 @@ pub fn catch_up(emu: &mut Snes) {
         if !hblank && !vblank {
             let x = emu.ppu.hpos - 22;
             let y = emu.ppu.vpos - 1;
+
+            if x == 0 {
+                emu.ppu.prepare_objects(y as u8);
+            }
 
             let color = match emu.ppu.inidisp_forced_blanking {
                 false => emu.ppu.render_pixel(x, y),
