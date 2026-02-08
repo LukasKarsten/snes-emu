@@ -646,7 +646,7 @@ impl Apu {
     fn inst_subw(&mut self) {
         let op = AddressingMode::Absolute8.resolve(self);
         let a = self.get_ya() as u32;
-        let b = -(self.get_operand_u16(op) as i16) as u16 as u32;
+        let b = (self.get_operand_u16(op) as i16).wrapping_neg() as u16 as u32;
 
         let result = a + b;
         self.set_ya(result as u16);
