@@ -40,6 +40,7 @@ pub struct DMAP {
     pub addressing_mode: AddressingMode,
     pub a_bus_address_step: ABusAddressStep,
     pub transfer_unit_select: TransferUnitSelect,
+    pub unused_bits: u8,
 }
 
 impl DMAP {
@@ -77,6 +78,7 @@ impl DMAP {
             addressing_mode,
             a_bus_address_step,
             transfer_unit_select,
+            unused_bits: bits & 0x20,
         }
     }
 
@@ -109,6 +111,7 @@ impl DMAP {
             | addressing_mode << 6
             | a_bus_address_step << 3
             | transfer_unit_select
+            | self.unused_bits
     }
 }
 
