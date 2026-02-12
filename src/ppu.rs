@@ -1354,6 +1354,13 @@ impl Ppu {
             y &= mask;
         }
 
+        if self.m7sel_screen_hflip {
+            x = 1023 - x;
+        }
+        if self.m7sel_screen_vflip {
+            y = 1023 - y;
+        }
+
         let tilemap_x = x >> 3;
         let tilemap_y = y >> 3;
 
