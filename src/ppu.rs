@@ -1,4 +1,4 @@
-use arbitrary_int::{traits::Integer, *};
+use arbitrary_int::prelude::*;
 
 use crate::Snes;
 
@@ -279,8 +279,8 @@ pub struct Ppu {
     pub oamaddl: u8,
     pub oamaddh: u8,
     // BGnHOFS / BGnVOFS
-    pub m7hofs: u16,
-    pub m7vofs: u16,
+    pub m7hofs: i13,
+    pub m7vofs: i13,
     // VMAIN
     pub vmain_increment_mode: VMAINIncrementMode,
     pub vmain_address_translation: VMAINAddressTranslation,
@@ -295,12 +295,12 @@ pub struct Ppu {
     pub m7sel_screen_vflip: bool,
     pub m7sel_screen_hflip: bool,
     // M7x
-    pub m7a: u16,
-    pub m7b: u16,
-    pub m7c: u16,
-    pub m7d: u16,
-    pub m7x: u16,
-    pub m7y: u16,
+    pub m7a: i16,
+    pub m7b: i16,
+    pub m7c: i16,
+    pub m7d: i16,
+    pub m7x: i13,
+    pub m7y: i13,
     // CGADD
     pub cgadd: u8,
     // SETINI
@@ -355,8 +355,8 @@ impl Default for Ppu {
             obsel_base_address: u3::new(0),
             oamaddl: 0,
             oamaddh: 0,
-            m7hofs: 0,
-            m7vofs: 0,
+            m7hofs: i13::ZERO,
+            m7vofs: i13::ZERO,
             vmain_increment_mode: VMAINIncrementMode::Low,
             vmain_address_translation: VMAINAddressTranslation::Bit10,
             vmain_address_increment_step: VMAINAddressIncrementStep::Step128,
@@ -370,8 +370,8 @@ impl Default for Ppu {
             m7b: 0xFF,
             m7c: 0,
             m7d: 0,
-            m7x: 0,
-            m7y: 0,
+            m7x: i13::ZERO,
+            m7y: i13::ZERO,
             cgadd: 0,
             setini_interlace: false,
             setini_interlace_obj_highvres: false,
@@ -582,7 +582,7 @@ impl Ppu {
                     self.bg_old = value;
 
                     if addr == 0x210D {
-                        self.m7hofs = (value as u16) << 8 | self.m7_old as u16;
+                        self.m7hofs = i13::masked_new((value as i16) << 8 | self.m7_old as i16);
                         self.m7_old = value;
                     }
                 } else {
@@ -590,7 +590,7 @@ impl Ppu {
                     self.bg_old = value;
 
                     if addr == 0x210E {
-                        self.m7vofs = (value as u16) << 8 | self.m7_old as u16;
+                        self.m7vofs = i13::masked_new((value as i16) << 8 | self.m7_old as i16);
                         self.m7_old = value;
                     }
                 }
@@ -648,28 +648,30 @@ impl Ppu {
             0x211B => {
                 // TODO: This port can also be used for general purpose math multiply.
                 // FIXME: I have no idea if this is the correct way.
-                self.m7a = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7a = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
+                self.update_mpy_regs();
             }
             0x211C => {
-                self.m7b = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7b = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
+                self.update_mpy_regs();
             }
             0x211D => {
-                self.m7c = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7c = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
             }
             0x211E => {
-                self.m7d = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7d = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
             }
             0x211F => {
-                self.m7x = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7x = i13::masked_new(((value as i16) << 8) | self.m7_old as i16);
+                self.m7_old = value;
             }
             0x2120 => {
-                self.m7y = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7y = i13::masked_new(((value as i16) << 8) | self.m7_old as i16);
+                self.m7_old = value;
             }
             0x2121 => {
                 self.cgadd = value;
@@ -808,6 +810,13 @@ impl Ppu {
             }
             _ => (),
         }
+    }
+
+    fn update_mpy_regs(&mut self) {
+        let mul_result = self.m7a as i32 * (self.m7b as i32 >> 8);
+        self.mpyl = mul_result as u8;
+        self.mpym = (mul_result >> 8) as u8;
+        self.mpyh = (mul_result >> 16) as u8;
     }
 
     fn translated_vram_word_address(&self) -> u16 {
@@ -967,14 +976,10 @@ impl Ppu {
         }
 
         let mode = self.backgrounds.mode.value();
-        if mode == 7 {
-            todo!()
-        }
-        let mode_def = &ModeDefinition::MODES[usize::from(mode)];
+        let mut colors = self.get_layer_colors(x, y, mode);
 
         let window = self.compute_window_mask(x);
 
-        let mut colors = self.get_layer_colors(x, y, mode_def);
         let main_layers = self.screens.tm & !(window & self.windows.tmw);
         let sub_layers = self.screens.ts & !(window & self.windows.tsw);
 
@@ -1105,22 +1110,49 @@ impl Ppu {
         (or & masks[0]) | (and & masks[1]) | (xor & masks[2]) | (xnor & masks[3])
     }
 
-    fn get_layer_colors(
-        &self,
-        x: u16,
-        y: u16,
-        mode_def: &ModeDefinition,
-    ) -> [LayerColor; NUM_LAYERS] {
+    fn get_layer_colors(&self, x: u16, y: u16, mode: u8) -> [LayerColor; NUM_LAYERS] {
         let mut colors = [LayerColor::TRANSPARENT; NUM_LAYERS];
         colors[LAYER_BACKDROP as usize] = LayerColor::new(self.get_color(0), 0);
 
-        let num_bgs = usize::from(mode_def.num_backgrounds);
-        for (i, color) in colors.iter_mut().enumerate().take(num_bgs) {
-            *color = self.get_bg_color(x, y, i, mode_def);
+        let obj_priorities;
+
+        if mode == 7 {
+            let color_data = self.get_mode7_bg_color_data(x, y);
+            if color_data != 0 {
+                let color = if self.backgrounds.direct_color {
+                    let r = u5::new((color_data & 0x07) << 2);
+                    let g = u5::new((color_data & 0x38) >> 1);
+                    let b = u5::new((color_data & 0xC0) >> 3);
+                    Color::new(r, g, b)
+                } else {
+                    self.get_color(color_data)
+                };
+                colors[LAYER_BG1 as usize] = LayerColor::new(color, 3);
+            }
+
+            if self.setini_extbg {
+                let priority = color_data >> 7;
+                let palette_idx = color_data & 0x7F;
+
+                if palette_idx != 0 {
+                    let color = self.get_color(palette_idx);
+                    let priority = [1, 5][priority as usize];
+                    colors[LAYER_BG2 as usize] = LayerColor::new(color, priority);
+                }
+            }
+
+            obj_priorities = &[2, 4, 6, 7];
+        } else {
+            let mode_def = &ModeDefinition::MODES[usize::from(mode)];
+            let num_bgs = usize::from(mode_def.num_backgrounds);
+            for (i, color) in colors.iter_mut().enumerate().take(num_bgs) {
+                *color = self.get_bg_color(x, y, i, mode_def);
+            }
+            obj_priorities = &mode_def.obj_priorities;
         }
 
         for obj_tile in &self.current_object_tiles[..self.current_object_tiles_len] {
-            let color = self.get_object_color(obj_tile, x, mode_def);
+            let color = self.get_object_color(obj_tile, x, obj_priorities);
             if color.priority != 0 {
                 colors[LAYER_OBJ as usize] = color;
                 break;
@@ -1223,7 +1255,7 @@ impl Ppu {
         &self,
         obj_tile: &ScanlineObjectTile,
         x: u16,
-        mode_def: &ModeDefinition,
+        priorities: &[u8; 4],
     ) -> LayerColor {
         let mut tile_off_x = x.wrapping_sub(obj_tile.x) & 0x1FF;
         let mut tile_off_y = obj_tile.tile_y_off as u16;
@@ -1244,7 +1276,7 @@ impl Ppu {
         let palette_offset = (8 + obj_tile.palette) * 16;
         let color = self.get_tile_color(tile_addr, tile_off_x, tile_off_y, palette_offset, 4);
 
-        let priority = mode_def.obj_priorities[obj_tile.priority as usize];
+        let priority = priorities[obj_tile.priority as usize];
 
         match color {
             Some(color) => LayerColor::new(color, priority),
@@ -1294,8 +1326,58 @@ impl Ppu {
 
         Color::new(r, g, b)
     }
+
+    fn get_mode7_bg_color_data(&self, x: u16, y: u16) -> u8 {
+        let offset_x = self.m7hofs.as_i32();
+        let offset_y = self.m7vofs.as_i32();
+        let origin_x = self.m7x.as_i32();
+        let origin_y = self.m7y.as_i32();
+
+        let a = self.m7a as i32;
+        let b = self.m7b as i32;
+        let c = self.m7c as i32;
+        let d = self.m7d as i32;
+
+        let tmp_x = x as i32 + offset_x - origin_x;
+        let tmp_y = y as i32 + offset_y - origin_y;
+
+        let mut x = ((a * tmp_x + b * tmp_y >> 8) + origin_x) as u16;
+        let mut y = ((c * tmp_x + d * tmp_y >> 8) + origin_y) as u16;
+
+        if x > 1023 || y > 1023 {
+            let mask = match self.m7sel_screen_over {
+                M7SELScreenOver::Wrap => 0x03FF,
+                M7SELScreenOver::Tile0 => 0x0007,
+                M7SELScreenOver::Transparent => return 0,
+            };
+            x &= mask;
+            y &= mask;
+        }
+
+        if self.m7sel_screen_hflip {
+            x = 1023 - x;
+        }
+        if self.m7sel_screen_vflip {
+            y = 1023 - y;
+        }
+
+        let tilemap_x = x >> 3;
+        let tilemap_y = y >> 3;
+
+        let char_x = x & 0x7;
+        let char_y = y & 0x7;
+
+        let tile_number = (tilemap_y << 7) + tilemap_x;
+
+        let char_number = self.vram[usize::from(tile_number * 2)] as u16;
+
+        let pixel_addr = char_number << 6 | char_y << 3 | char_x;
+
+        self.vram[usize::from(pixel_addr * 2 + 1)]
+    }
 }
 
+#[derive(PartialEq, Eq)]
 struct ModeDefinition {
     num_backgrounds: u8,
     bpp: [u8; 4],
