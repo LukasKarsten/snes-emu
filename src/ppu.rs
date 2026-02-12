@@ -1,4 +1,4 @@
-use arbitrary_int::{traits::Integer, *};
+use arbitrary_int::prelude::*;
 
 use crate::Snes;
 
@@ -279,8 +279,8 @@ pub struct Ppu {
     pub oamaddl: u8,
     pub oamaddh: u8,
     // BGnHOFS / BGnVOFS
-    pub m7hofs: u16,
-    pub m7vofs: u16,
+    pub m7hofs: i13,
+    pub m7vofs: i13,
     // VMAIN
     pub vmain_increment_mode: VMAINIncrementMode,
     pub vmain_address_translation: VMAINAddressTranslation,
@@ -295,12 +295,12 @@ pub struct Ppu {
     pub m7sel_screen_vflip: bool,
     pub m7sel_screen_hflip: bool,
     // M7x
-    pub m7a: u16,
-    pub m7b: u16,
-    pub m7c: u16,
-    pub m7d: u16,
-    pub m7x: u16,
-    pub m7y: u16,
+    pub m7a: i16,
+    pub m7b: i16,
+    pub m7c: i16,
+    pub m7d: i16,
+    pub m7x: i13,
+    pub m7y: i13,
     // CGADD
     pub cgadd: u8,
     // SETINI
@@ -355,8 +355,8 @@ impl Default for Ppu {
             obsel_base_address: u3::new(0),
             oamaddl: 0,
             oamaddh: 0,
-            m7hofs: 0,
-            m7vofs: 0,
+            m7hofs: i13::ZERO,
+            m7vofs: i13::ZERO,
             vmain_increment_mode: VMAINIncrementMode::Low,
             vmain_address_translation: VMAINAddressTranslation::Bit10,
             vmain_address_increment_step: VMAINAddressIncrementStep::Step128,
@@ -370,8 +370,8 @@ impl Default for Ppu {
             m7b: 0xFF,
             m7c: 0,
             m7d: 0,
-            m7x: 0,
-            m7y: 0,
+            m7x: i13::ZERO,
+            m7y: i13::ZERO,
             cgadd: 0,
             setini_interlace: false,
             setini_interlace_obj_highvres: false,
@@ -582,7 +582,7 @@ impl Ppu {
                     self.bg_old = value;
 
                     if addr == 0x210D {
-                        self.m7hofs = (value as u16) << 8 | self.m7_old as u16;
+                        self.m7hofs = i13::masked_new((value as i16) << 8 | self.m7_old as i16);
                         self.m7_old = value;
                     }
                 } else {
@@ -590,7 +590,7 @@ impl Ppu {
                     self.bg_old = value;
 
                     if addr == 0x210E {
-                        self.m7vofs = (value as u16) << 8 | self.m7_old as u16;
+                        self.m7vofs = i13::masked_new((value as i16) << 8 | self.m7_old as i16);
                         self.m7_old = value;
                     }
                 }
@@ -648,28 +648,30 @@ impl Ppu {
             0x211B => {
                 // TODO: This port can also be used for general purpose math multiply.
                 // FIXME: I have no idea if this is the correct way.
-                self.m7a = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7a = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
+                self.update_mpy_regs();
             }
             0x211C => {
-                self.m7b = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7b = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
+                self.update_mpy_regs();
             }
             0x211D => {
-                self.m7c = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7c = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
             }
             0x211E => {
-                self.m7d = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7d = ((value as i16) << 8) | self.m7_old as i16;
+                self.m7_old = value;
             }
             0x211F => {
-                self.m7x = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7x = i13::masked_new(((value as i16) << 8) | self.m7_old as i16);
+                self.m7_old = value;
             }
             0x2120 => {
-                self.m7y = ((value as u16) << 8) | self.bg_old as u16;
-                self.bg_old = value;
+                self.m7y = i13::masked_new(((value as i16) << 8) | self.m7_old as i16);
+                self.m7_old = value;
             }
             0x2121 => {
                 self.cgadd = value;
@@ -808,6 +810,13 @@ impl Ppu {
             }
             _ => (),
         }
+    }
+
+    fn update_mpy_regs(&mut self) {
+        let mul_result = self.m7a as i32 * (self.m7b as i32 >> 8);
+        self.mpyl = mul_result as u8;
+        self.mpym = (mul_result >> 8) as u8;
+        self.mpyh = (mul_result >> 16) as u8;
     }
 
     fn translated_vram_word_address(&self) -> u16 {
