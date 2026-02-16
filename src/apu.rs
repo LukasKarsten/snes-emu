@@ -976,16 +976,6 @@ impl Apu {
 
     #[rustfmt::skip]
     fn step(&mut self) {
-        if self.reset {
-            self.rom_enable = true;
-            self.cpuio_in.fill(0);
-            self.cpuio_out.fill(0);
-            let pc_ll = self.read(0xFFFE) as u16;
-            let pc_hh = self.read(0xFFFF) as u16;
-            self.pc = pc_hh << 8 | pc_ll;
-            self.cycles = 0;
-            self.reset = false;
-        }
 
         self.cycles += 24;
 
@@ -1286,6 +1276,19 @@ impl Apu {
 }
 
 pub fn catch_up(emu: &mut Snes) {
+    if emu.apu.reset {
+        emu.apu.rom_enable = true;
+        emu.apu.cpuio_in.fill(0);
+        emu.apu.cpuio_out.fill(0);
+        let pc_ll = emu.apu.read(0xFFFE) as u16;
+        let pc_hh = emu.apu.read(0xFFFF) as u16;
+        emu.apu.pc = pc_hh << 8 | pc_ll;
+        emu.apu.cycles = 0;
+        emu.apu.cycles_8khz_clock = 0;
+        emu.apu.cycles_64khz_clock = 0;
+        emu.apu.reset = false;
+    }
+
     // TODO: The APU has a separate clock which runs a little faster, but this should suffice for
     // now
     while emu.apu.cycles < emu.cpu.cycles() {
