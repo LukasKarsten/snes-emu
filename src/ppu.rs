@@ -856,6 +856,9 @@ impl Ppu {
         self.setini_hpseudo512 = false;
         self.setini_extbg = false;
         self.setini_external_sync = false;
+        self.cycles = 0;
+        self.hpos = 0;
+        self.vpos = 0;
     }
 
     pub fn output_height(&self) -> u16 {
