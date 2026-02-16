@@ -1029,7 +1029,7 @@ impl Ppu {
             LAYER_BG2 => self.screens.math_on_backgrounds[1],
             LAYER_BG3 => self.screens.math_on_backgrounds[2],
             LAYER_BG4 => self.screens.math_on_backgrounds[3],
-            LAYER_OBJ => self.screens.math_on_objects,
+            LAYER_OBJ => self.screens.math_on_objects && colors[LAYER_OBJ as usize].palette >= 4,
             _ => self.screens.math_on_backdrop,
         };
 
@@ -1046,7 +1046,7 @@ impl Ppu {
             self.screens.backdrop_green,
             self.screens.backdrop_blue,
         );
-        colors[LAYER_BACKDROP as usize] = LayerColor::new(backdrop, 0);
+        colors[LAYER_BACKDROP as usize] = LayerColor::new(backdrop, 0, 0);
         if enable_sub_screen {
             (sub_color, sub_layer) = match self.screens.sub_screen_bg_obj_enable {
                 true => select_color(&colors, sub_layers, bg3_high_priority),
@@ -1115,7 +1115,7 @@ impl Ppu {
 
     fn get_layer_colors(&self, x: u16, y: u16, mode: u8) -> [LayerColor; NUM_LAYERS] {
         let mut colors = [LayerColor::TRANSPARENT; NUM_LAYERS];
-        colors[LAYER_BACKDROP as usize] = LayerColor::new(self.get_color(0), 0);
+        colors[LAYER_BACKDROP as usize] = LayerColor::new(self.get_color(0), 0, 0);
 
         let obj_priorities;
 
@@ -1130,7 +1130,7 @@ impl Ppu {
                 } else {
                     self.get_color(color_data)
                 };
-                colors[LAYER_BG1 as usize] = LayerColor::new(color, 3);
+                colors[LAYER_BG1 as usize] = LayerColor::new(color, 0, 3);
             }
 
             if self.setini_extbg {
@@ -1140,7 +1140,7 @@ impl Ppu {
                 if palette_idx != 0 {
                     let color = self.get_color(palette_idx);
                     let priority = [1, 5][priority as usize];
-                    colors[LAYER_BG2 as usize] = LayerColor::new(color, priority);
+                    colors[LAYER_BG2 as usize] = LayerColor::new(color, 0, priority);
                 }
             }
 
@@ -1246,11 +1246,15 @@ impl Ppu {
             palette_offset += palette_number << bpp;
         }
 
-        let color = self.get_tile_color(tile_addr, tile_off_x, tile_off_y, palette_offset, bpp);
+        let color_data = self.get_tile_color_data(tile_addr, tile_off_x, tile_off_y, bpp);
 
-        match color {
-            Some(color) => LayerColor::new(color, priorities[bg_priority as usize]),
-            None => LayerColor::TRANSPARENT,
+        match color_data {
+            0 => LayerColor::TRANSPARENT,
+            palette_idx => LayerColor::new(
+                self.get_color(palette_offset + palette_idx),
+                0,
+                priorities[bg_priority as usize],
+            ),
         }
     }
 
@@ -1277,24 +1281,27 @@ impl Ppu {
         let tile_addr = obj_tile.tile_addr * 2;
 
         let palette_offset = (8 + obj_tile.palette) * 16;
-        let color = self.get_tile_color(tile_addr, tile_off_x, tile_off_y, palette_offset, 4);
+        let color_data = self.get_tile_color_data(tile_addr, tile_off_x, tile_off_y, 4);
 
         let priority = priorities[obj_tile.priority as usize];
 
-        match color {
-            Some(color) => LayerColor::new(color, priority),
-            None => LayerColor::TRANSPARENT,
+        match color_data {
+            0 => LayerColor::TRANSPARENT,
+            palette_idx => LayerColor::new(
+                self.get_color(palette_offset + palette_idx),
+                obj_tile.palette,
+                priority,
+            ),
         }
     }
 
-    fn get_tile_color(
+    fn get_tile_color_data(
         &self,
         tile_addr: u16,
         tile_off_x: u16,
         tile_off_y: u16,
-        palette_offset: u8,
         bpp: u16,
-    ) -> Option<Color> {
+    ) -> u8 {
         let mut palette_idx = 0;
 
         for plane_off in (0..bpp).step_by(2) {
@@ -1310,11 +1317,7 @@ impl Ppu {
             palette_idx |= (bit1 | bit2 << 1) << plane_off;
         }
 
-        if palette_idx == 0 {
-            return None;
-        }
-
-        Some(self.get_color(palette_offset + palette_idx))
+        palette_idx
     }
 
     fn get_color(&self, palette_idx: u8) -> Color {
@@ -1454,14 +1457,19 @@ impl ModeDefinition {
 #[derive(Default, Clone, Copy)]
 struct LayerColor {
     color: Color,
+    palette: u8,
     priority: u8,
 }
 
 impl LayerColor {
-    const TRANSPARENT: Self = Self::new(Color::BLACK, 0);
+    const TRANSPARENT: Self = Self::new(Color::BLACK, 0, 0);
 
-    const fn new(color: Color, priority: u8) -> Self {
-        Self { color, priority }
+    const fn new(color: Color, palette: u8, priority: u8) -> Self {
+        Self {
+            color,
+            palette,
+            priority,
+        }
     }
 }
 
