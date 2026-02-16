@@ -1516,16 +1516,16 @@ pub fn catch_up(emu: &mut Snes) {
             }
         }
 
-        let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos > 277;
-        let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos > height;
+        let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos >= 278;
+        let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos >= height;
 
         #[allow(clippy::identity_op)]
         if !hblank && !vblank {
             let x = emu.ppu.hpos - 22;
-            let y = emu.ppu.vpos - 1;
+            let y = emu.ppu.vpos;
 
             if x == 0 {
-                emu.ppu.prepare_objects(y as u8);
+                emu.ppu.prepare_objects(y as u8 - 1);
             }
 
             let color = match emu.ppu.inidisp_forced_blanking {
@@ -1537,10 +1537,6 @@ pub fn catch_up(emu: &mut Snes) {
             emu.ppu.output.set(x * 2 + 1, y * 2 + 0, color);
             emu.ppu.output.set(x * 2 + 0, y * 2 + 1, color);
             emu.ppu.output.set(x * 2 + 1, y * 2 + 1, color);
-        }
-
-        if emu.ppu.hpos == 277 && emu.ppu.vpos == height {
-            // TODO
         }
     }
 }
