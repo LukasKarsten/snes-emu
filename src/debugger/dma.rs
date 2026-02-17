@@ -61,15 +61,15 @@ impl super::Tab for DmaTab {
                 egui::Id::new("transfer-unit-select").with(idx),
                 "",
                 &mut channel.dmap.transfer_unit_select,
-                    TransferUnitSelect::WO1Bytes1Regs => "WO/1B/1R",
-                    TransferUnitSelect::WO2Bytes2Regs => "WO/2B/2R",
-                    TransferUnitSelect::WT2Bytes1Regs => "WT/2B/1R",
-                    TransferUnitSelect::WT4Bytes2Regs => "WT/4B/2R",
-                    TransferUnitSelect::WO4Bytes4Regs => "WO/4B/4R",
-                    TransferUnitSelect::WO4Bytes2Regs => "WO/4B/2R",
-                    @hidden:
-                    TransferUnitSelect::WT2Bytes1RegsAgain => "WT/2B/1R",
-                    TransferUnitSelect::WT4Bytes2RegsAgain => "WT/4B/2R",
+                TransferUnitSelect::WO1Bytes1Regs => "WO/1B/1R",
+                TransferUnitSelect::WO2Bytes2Regs => "WO/2B/2R",
+                TransferUnitSelect::WT2Bytes1Regs => "WT/2B/1R",
+                TransferUnitSelect::WT4Bytes2Regs => "WT/4B/2R",
+                TransferUnitSelect::WO4Bytes4Regs => "WO/4B/4R",
+                TransferUnitSelect::WO4Bytes2Regs => "WO/4B/2R",
+                @hidden:
+                TransferUnitSelect::WT2Bytes1RegsAgain => "WT/2B/1R",
+                TransferUnitSelect::WT4Bytes2RegsAgain => "WT/4B/2R",
             );
 
             show_reg_u8(ui, &mut channel.bbad);
