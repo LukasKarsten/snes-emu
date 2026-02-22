@@ -2079,7 +2079,10 @@ fn process_interrupt(emu: &mut Snes) {
         return;
     }
 
-    emu.cpu.pending_interrupts &= !(1 << interrupt);
+    // IRQ must be cleared manually
+    if interrupt != INT_IRQ as u32 {
+        emu.cpu.pending_interrupts &= !(1 << interrupt);
+    }
 
     match interrupt as u8 {
         INT_RESET => int_reset(emu),
