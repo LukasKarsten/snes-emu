@@ -127,11 +127,11 @@ impl WindowMaskLogic {
     }
 }
 
-const WINDOW_OBJ: u8 = 0x01;
-const WINDOW_BG1: u8 = 0x02;
-const WINDOW_BG2: u8 = 0x04;
-const WINDOW_BG3: u8 = 0x08;
-const WINDOW_BG4: u8 = 0x10;
+const WINDOW_BG1: u8 = 0x01;
+const WINDOW_BG2: u8 = 0x02;
+const WINDOW_BG3: u8 = 0x04;
+const WINDOW_BG4: u8 = 0x08;
+const WINDOW_OBJ: u8 = 0x10;
 const WINDOW_MATH: u8 = 0x20;
 
 #[derive(Clone, Copy)]
@@ -682,60 +682,57 @@ impl Ppu {
                 self.cgadd = self.cgadd.wrapping_add(self.cgram_selector);
                 self.cgram_selector ^= 1;
             }
-            #[allow(clippy::identity_op)]
             0x2123 => {
-                self.windows.w1en &= !0x06;
-                self.windows.w2en &= !0x06;
-                self.windows.w1inv &= !0x06;
-                self.windows.w2inv &= !0x06;
-
-                // bit 2
-                self.windows.w1inv |= (value & 0x01) << 1;
-                self.windows.w1en |= (value & 0x02) >> 0;
-                self.windows.w2inv |= (value & 0x04) >> 1;
-                self.windows.w2en |= (value & 0x08) >> 2;
-
-                // bit 3
-                self.windows.w1inv |= (value & 0x10) >> 2;
-                self.windows.w1en |= (value & 0x20) >> 3;
-                self.windows.w2inv |= (value & 0x40) >> 4;
-                self.windows.w2en |= (value & 0x80) >> 5;
-            }
-            #[allow(clippy::identity_op)]
-            0x2124 => {
-                self.windows.w1en &= !0x18;
-                self.windows.w2en &= !0x18;
-                self.windows.w1inv &= !0x18;
-                self.windows.w2inv &= !0x18;
-
-                // bit 4
-                self.windows.w1inv |= (value & 0x01) << 3;
-                self.windows.w1en |= (value & 0x02) << 2;
-                self.windows.w2inv |= (value & 0x04) << 1;
-                self.windows.w2en |= (value & 0x08) << 0;
-
-                // bit 5
-                self.windows.w1inv |= (value & 0x10) >> 0;
-                self.windows.w1en |= (value & 0x20) >> 1;
-                self.windows.w2inv |= (value & 0x40) >> 2;
-                self.windows.w2en |= (value & 0x80) >> 3;
-            }
-            #[allow(clippy::identity_op)]
-            0x2125 => {
-                self.windows.w1en &= !0x21;
-                self.windows.w2en &= !0x21;
-                self.windows.w1inv &= !0x21;
-                self.windows.w2inv &= !0x21;
+                self.windows.w1en &= !0x03;
+                self.windows.w2en &= !0x03;
+                self.windows.w1inv &= !0x03;
+                self.windows.w2inv &= !0x03;
 
                 // bit 1
-                self.windows.w1inv |= (value & 0x01) >> 0;
+                self.windows.w1inv |= value & 0x01;
                 self.windows.w1en |= (value & 0x02) >> 1;
                 self.windows.w2inv |= (value & 0x04) >> 2;
                 self.windows.w2en |= (value & 0x08) >> 3;
 
+                // bit 2
+                self.windows.w1inv |= (value & 0x10) >> 3;
+                self.windows.w1en |= (value & 0x20) >> 4;
+                self.windows.w2inv |= (value & 0x40) >> 5;
+                self.windows.w2en |= (value & 0x80) >> 6;
+            }
+            0x2124 => {
+                self.windows.w1en &= !0x0C;
+                self.windows.w2en &= !0x0C;
+                self.windows.w1inv &= !0x0C;
+                self.windows.w2inv &= !0x0C;
+
+                // bit 3
+                self.windows.w1inv |= (value & 0x01) << 2;
+                self.windows.w1en |= (value & 0x02) << 1;
+                self.windows.w2inv |= value & 0x04;
+                self.windows.w2en |= (value & 0x08) >> 1;
+
+                // bit 4
+                self.windows.w1inv |= value & 0x10 >> 1;
+                self.windows.w1en |= (value & 0x20) >> 2;
+                self.windows.w2inv |= (value & 0x40) >> 3;
+                self.windows.w2en |= (value & 0x80) >> 4;
+            }
+            0x2125 => {
+                self.windows.w1en &= !0x30;
+                self.windows.w2en &= !0x30;
+                self.windows.w1inv &= !0x30;
+                self.windows.w2inv &= !0x30;
+
+                // bit 5
+                self.windows.w1inv |= (value & 0x01) << 4;
+                self.windows.w1en |= (value & 0x02) << 3;
+                self.windows.w2inv |= (value & 0x04) << 2;
+                self.windows.w2en |= (value & 0x08) << 1;
+
                 // bit 6
                 self.windows.w1inv |= (value & 0x10) << 1;
-                self.windows.w1en |= (value & 0x20) << 0;
+                self.windows.w1en |= value & 0x20;
                 self.windows.w2inv |= (value & 0x40) >> 1;
                 self.windows.w2en |= (value & 0x80) >> 2;
             }
