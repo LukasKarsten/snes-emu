@@ -60,19 +60,9 @@ fn create_window(event_loop: &ActiveEventLoop) -> Result<Window, Box<dyn std::er
 
     #[cfg(target_arch = "wasm32")]
     let window_attributes = {
-        use web_sys::{wasm_bindgen::JsCast, HtmlCanvasElement};
         use winit::platform::web::WindowAttributesExtWebSys;
 
-        let window = web_sys::window().unwrap();
-        let document = window.document().unwrap();
-        let element = document
-            .get_element_by_id("canvas")
-            .expect("No element with id 'canvas' found");
-        let canvas: HtmlCanvasElement = element
-            .dyn_into()
-            .expect("Element with id 'canvas' is not a canvas");
-
-        window_attributes.with_canvas(Some(canvas))
+        window_attributes.with_append(true)
     };
 
     Ok(event_loop.create_window(window_attributes)?)
