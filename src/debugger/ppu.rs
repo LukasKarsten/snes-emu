@@ -1,6 +1,7 @@
 use arbitrary_int::{traits::Integer, u3, u4, u6};
 use egui::Widget;
 use egui_memory_editor::MemoryEditor;
+use snes_emu::ppu::{MathEnable, WindowMaskLogic};
 
 #[derive(Default)]
 pub struct PpuMiscTab;
@@ -253,9 +254,9 @@ impl super::Tab for PpuWindowsTab {
     fn ui(&mut self, emulation_state: &mut crate::EmulationState, ui: &mut egui::Ui) {
         let ppuio = &mut emulation_state.snes.ppu;
 
-        fn bitfield_checkbox(bitfield: &mut u8, idx: u8, label: &str, ui: &mut egui::Ui) {
+        fn bitfield_checkbox(bitfield: &mut u8, idx: u8, ui: &mut egui::Ui) {
             let mut value = (*bitfield >> idx) & 1 != 0;
-            ui.checkbox(&mut value, label);
+            ui.checkbox(&mut value, "");
             *bitfield = *bitfield & !(1 << idx) | ((value as u8) << idx);
         }
 
@@ -273,24 +274,91 @@ impl super::Tab for PpuWindowsTab {
                 });
             });
 
-            ui.vertical(|ui| {
-                ui.label("Main-Screen");
-                bitfield_checkbox(&mut ppuio.windows.tmw, 0, "BG1", ui);
-                bitfield_checkbox(&mut ppuio.windows.tmw, 1, "BG2", ui);
-                bitfield_checkbox(&mut ppuio.windows.tmw, 2, "BG3", ui);
-                bitfield_checkbox(&mut ppuio.windows.tmw, 3, "BG4", ui);
-                bitfield_checkbox(&mut ppuio.windows.tmw, 4, "OBJ", ui);
-            });
+            egui::Grid::new("ppu-windows-controls").show(ui, |ui| {
+                ui.label("");
+                ui.label("W1EN");
+                ui.label("W1IO");
+                ui.label("W2EN");
+                ui.label("W2IO");
+                ui.label("Logic");
+                ui.label("MainSW");
+                ui.label("SubSW");
+                ui.end_row();
 
-            ui.separator();
+                for i in 0..4 {
+                    ui.label(format!("BG{}", i + 1));
+                    bitfield_checkbox(&mut ppuio.windows.w1en, i, ui);
+                    bitfield_checkbox(&mut ppuio.windows.w1inv, i, ui);
+                    bitfield_checkbox(&mut ppuio.windows.w2en, i, ui);
+                    bitfield_checkbox(&mut ppuio.windows.w2inv, i, ui);
+                    enum_combobox!(
+                        ui,
+                        egui::Id::new("ppu-window-logic").with(i),
+                        "",
+                        &mut ppuio.windows.backgrounds[usize::from(i)],
+                        WindowMaskLogic::Or => "or",
+                        WindowMaskLogic::And => "and",
+                        WindowMaskLogic::Xor => "xor",
+                        WindowMaskLogic::Xnor => "xnor",
+                    );
+                    bitfield_checkbox(&mut ppuio.windows.tmw, i, ui);
+                    bitfield_checkbox(&mut ppuio.windows.tsw, i, ui);
+                    ui.end_row();
+                }
 
-            ui.vertical(|ui| {
-                ui.label("Sub-Screen");
-                bitfield_checkbox(&mut ppuio.windows.tsw, 0, "BG1", ui);
-                bitfield_checkbox(&mut ppuio.windows.tsw, 1, "BG2", ui);
-                bitfield_checkbox(&mut ppuio.windows.tsw, 2, "BG3", ui);
-                bitfield_checkbox(&mut ppuio.windows.tsw, 3, "BG4", ui);
-                bitfield_checkbox(&mut ppuio.windows.tsw, 4, "OBJ", ui);
+                ui.label("OBJ");
+                bitfield_checkbox(&mut ppuio.windows.w1en, 5, ui);
+                bitfield_checkbox(&mut ppuio.windows.w1inv, 5, ui);
+                bitfield_checkbox(&mut ppuio.windows.w2en, 5, ui);
+                bitfield_checkbox(&mut ppuio.windows.w2inv, 5, ui);
+                enum_combobox!(
+                    ui,
+                    egui::Id::new("ppu-window-logic").with(5),
+                    "",
+                    &mut ppuio.windows.objects,
+                    WindowMaskLogic::Or => "or",
+                    WindowMaskLogic::And => "and",
+                    WindowMaskLogic::Xor => "xor",
+                    WindowMaskLogic::Xnor => "xnor",
+                );
+                bitfield_checkbox(&mut ppuio.windows.tmw, 5, ui);
+                bitfield_checkbox(&mut ppuio.windows.tsw, 5, ui);
+                ui.end_row();
+
+                ui.label("Math");
+                bitfield_checkbox(&mut ppuio.windows.w1en, 6, ui);
+                bitfield_checkbox(&mut ppuio.windows.w1inv, 6, ui);
+                bitfield_checkbox(&mut ppuio.windows.w2en, 6, ui);
+                bitfield_checkbox(&mut ppuio.windows.w2inv, 6, ui);
+                enum_combobox!(
+                    ui,
+                    egui::Id::new("ppu-window-logic").with(6),
+                    "",
+                    &mut ppuio.windows.math,
+                    WindowMaskLogic::Or => "or",
+                    WindowMaskLogic::And => "and",
+                    WindowMaskLogic::Xor => "xor",
+                    WindowMaskLogic::Xnor => "xnor",
+                );
+                enum_combobox!(ui,
+                    "ppu-window-logic-main-math",
+                    "",
+                    &mut ppuio.windows.main_screen_black,
+                    MathEnable::Always => "Always",
+                    MathEnable::InsideWindow => "Inside",
+                    MathEnable::OutsideWindow => "Outside",
+                    MathEnable::Never => "Never",
+                );
+                enum_combobox!(ui,
+                    "ppu-window-logic-sub-math",
+                    "",
+                    &mut ppuio.windows.sub_screen_black,
+                    MathEnable::Always => "Always",
+                    MathEnable::InsideWindow => "Inside",
+                    MathEnable::OutsideWindow => "Outside",
+                    MathEnable::Never => "Never",
+                );
+                ui.end_row();
             });
         });
     }
