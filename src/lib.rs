@@ -2,8 +2,9 @@ use cpu::StepResult;
 use input::InputDevice;
 
 pub use apu::Apu;
-pub use cpu::Cpu;
+pub use cpu::{Cpu, MappingMode};
 pub use dma::Dma;
+pub use header::RomHeader;
 pub use joypad::JoypadIo;
 pub use ppu::{OutputImage, Ppu};
 pub use wram::WRam;
@@ -12,6 +13,7 @@ pub mod apu;
 pub mod cpu;
 pub mod disasm;
 pub mod dma;
+mod header;
 pub mod input;
 pub mod joypad;
 pub mod ppu;
@@ -28,12 +30,15 @@ pub struct Snes {
     pub dma: Dma,
     mdr: u8,
     frame_finished: bool,
+    pub header: RomHeader,
 }
 
 impl Snes {
-    pub fn new(rom: Box<[u8]>, mapping_mode: cpu::MappingMode) -> Self {
+    pub fn new(rom: Box<[u8]>) -> Self {
+        let header = header::extract(&rom);
+
         let mut snes = Self {
-            cpu: Cpu::new(mapping_mode),
+            cpu: Cpu::new(header.mapping_mode),
             ppu: Ppu::default(),
             apu: Apu::default(),
             wram: WRam::default(),
@@ -43,6 +48,7 @@ impl Snes {
             dma: Dma::default(),
             mdr: 0,
             frame_finished: false,
+            header,
         };
         snes.cpu.raise_interrupt(cpu::Interrupt::Reset);
         snes

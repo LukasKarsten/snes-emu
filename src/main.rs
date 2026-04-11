@@ -7,7 +7,7 @@ use std::{
 use debugger::Debugger;
 use game_view::GameView;
 use render::Renderer;
-use snes_emu::{cpu::MappingMode, Snes};
+use snes_emu::Snes;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use web_time::Instant;
 use winit::{
@@ -455,7 +455,8 @@ impl AppState {
     }
 
     fn load_rom(&mut self, rom: Box<[u8]>) {
-        let mut snes = Snes::new(rom, MappingMode::LoRom);
+        let mut snes = Snes::new(rom);
+
         let current_input = Arc::clone(&self.current_input);
         snes.set_input1(Some(Box::new(snes_emu::input::Joypad::new(move || {
             let current_input = current_input.read().unwrap();
