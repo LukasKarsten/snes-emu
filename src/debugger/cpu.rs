@@ -161,8 +161,8 @@ impl Tab for CpuTab {
 
             ui.vertical(|ui| {
                 egui::Grid::new("cpu-disasm").striped(true).show(ui, |ui| {
-                    let mut instructions = [snes_emu::disasm::Instruction::default(); 10];
-                    snes_emu::disasm::disassemble(&emulation_state.snes, &mut instructions);
+                    let mut instructions = [snes_emu::cpu::disasm::Instruction::default(); 10];
+                    snes_emu::cpu::disasm::disassemble(&emulation_state.snes, &mut instructions);
                     for instruction in instructions {
                         ui.monospace(format!("{:06X}:", instruction.address()));
                         ui.monospace(instruction.to_string());
@@ -238,7 +238,7 @@ impl BranchArrow {
 
 // TODO: Dump instruction encoding
 fn dump_instructions(snes: &Snes) {
-    use snes_emu::disasm::Param;
+    use snes_emu::cpu::disasm::Param;
     use std::io::Write;
 
     let instructions = &snes.cpu.debug.encountered_instructions;

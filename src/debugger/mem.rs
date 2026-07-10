@@ -34,16 +34,16 @@ impl Tab for BusTab {
             "mapping-mode",
             "Mapping Mode",
             &mut emulation_state.snes.cpu.mapping_mode,
-            cpu::MappingMode::LoRom => "LoROM",
-            cpu::MappingMode::HiRom => "HiROM",
-            cpu::MappingMode::ExHiRom => "ExHiROM",
+            cpu::memory::MappingMode::LoRom => "LoROM",
+            cpu::memory::MappingMode::HiRom => "HiROM",
+            cpu::memory::MappingMode::ExHiRom => "ExHiROM",
         );
 
         self.memory_editor.draw_editor_contents(
             ui,
             &mut emulation_state.snes,
-            |emu, addr| cpu::read_pure(emu, addr as u32),
-            |emu, addr, value| cpu::write(emu, addr as u32, value),
+            |emu, addr| cpu::memory::read_pure(emu, addr as u32),
+            |emu, addr, value| cpu::memory::write(emu, addr as u32, value),
         );
     }
 }

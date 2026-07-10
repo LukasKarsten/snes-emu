@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::cpu::MappingMode;
+use crate::cpu::memory::MappingMode;
 
 pub struct RomHeader {
     pub title: Box<[u8]>,

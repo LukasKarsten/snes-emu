@@ -10,7 +10,7 @@ impl super::Tab for DmaTab {
         let snes = &mut emulation_state.snes;
 
         fn show_channel(ui: &mut egui::Ui, snes: &mut snes_emu::Snes, idx: usize) {
-            use snes_emu::dma::{
+            use snes_emu::cpu::dma::{
                 ABusAddressStep, AddressingMode, TransferDirection, TransferUnitSelect,
             };
 
@@ -24,7 +24,7 @@ impl super::Tab for DmaTab {
 
             ui.label(format!("Channel {idx}"));
 
-            let channel = &mut snes.dma.channels[idx];
+            let channel = &mut snes.cpu.dma.channels[idx];
 
             enum_combobox!(
                 ui,

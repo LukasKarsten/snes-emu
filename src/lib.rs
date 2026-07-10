@@ -2,8 +2,7 @@ use cpu::StepResult;
 use input::InputDevice;
 
 pub use apu::Apu;
-pub use cpu::{Cpu, MappingMode};
-pub use dma::Dma;
+pub use cpu::{memory::MappingMode, Cpu};
 pub use header::RomHeader;
 pub use joypad::JoypadIo;
 pub use ppu::{OutputImage, Ppu};
@@ -11,8 +10,6 @@ pub use wram::WRam;
 
 pub mod apu;
 pub mod cpu;
-pub mod disasm;
-pub mod dma;
 mod header;
 pub mod input;
 pub mod joypad;
@@ -27,8 +24,6 @@ pub struct Snes {
     sram: Box<[u8; 0x080000]>,
     rom: Box<[u8]>,
     joypad: JoypadIo,
-    pub dma: Dma,
-    mdr: u8,
     frame_finished: bool,
     pub header: RomHeader,
 }
@@ -45,8 +40,6 @@ impl Snes {
             sram: vec![0; 0x080000].try_into().unwrap(),
             rom,
             joypad: JoypadIo::default(),
-            dma: Dma::default(),
-            mdr: 0,
             frame_finished: false,
             header,
         };
