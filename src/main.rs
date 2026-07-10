@@ -248,7 +248,7 @@ impl ActiveState {
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let ctx = self.egui_state.egui_ctx();
-        let output = ctx.run(raw_input, |ctx| state.view(ctx));
+        let output = ctx.run_ui(raw_input, |ctx| state.view(ctx));
 
         let pixels_per_point = self.window.scale_factor() as f32 * ctx.zoom_factor();
 
@@ -326,13 +326,13 @@ impl AppState {
         }
     }
 
-    fn view(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("menu-bar").show(ctx, |ui| {
+    fn view(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("menu-bar").show(ui, |ui| {
             egui::containers::menu::MenuBar::new().ui(ui, |ui| self.menu_bar(ui));
         });
 
         let Some(emu_state) = &mut self.emulation_state else {
-            egui::CentralPanel::default().show(ctx, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.label(egui::RichText::new("No ROM loaded").size(24.0).weak());
                 });
@@ -340,22 +340,22 @@ impl AppState {
             return;
         };
 
-        ctx.input_mut(|input| {
+        ui.input_mut(|input| {
             if input.key_pressed(egui::Key::F3) {
                 self.show_debugger = !self.show_debugger;
             }
         });
 
         if self.show_debugger {
-            self.debugger.show(ctx, emu_state);
+            self.debugger.show(ui, emu_state);
         } else {
-            egui::CentralPanel::default().show(ctx, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 use debugger::Tab;
                 GameView.ui(emu_state, ui);
             });
         }
 
-        ctx.input(|input| {
+        ui.input(|input| {
             let mut current_input = emu_state.current_input.write().unwrap();
             current_input.start = input.key_down(egui::Key::Escape);
             current_input.select = input.key_down(egui::Key::Space);

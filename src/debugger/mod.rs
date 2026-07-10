@@ -166,8 +166,9 @@ impl Default for Debugger {
 }
 
 impl Debugger {
-    pub fn show(&mut self, ctx: &egui::Context, emulation_state: &mut EmulationState) {
-        DockArea::new(&mut self.dock_state).show(ctx, &mut DebugTabViewer { emulation_state });
+    pub fn show(&mut self, ui: &mut egui::Ui, emulation_state: &mut EmulationState) {
+        DockArea::new(&mut self.dock_state)
+            .show_inside(ui, &mut DebugTabViewer { emulation_state });
     }
 
     pub fn open_tab(&mut self, tab: Box<dyn Tab>) {

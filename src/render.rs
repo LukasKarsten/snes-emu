@@ -27,9 +27,12 @@ impl Renderer {
 
         let backends = wgpu::Backends::from_env().unwrap_or(default_backends);
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends,
-            ..Default::default()
+            flags: wgpu::InstanceFlags::from_env_or_default(),
+            display: None,
+            backend_options: wgpu::BackendOptions::from_env_or_default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         });
 
         let surface = instance.create_surface(target)?;
@@ -110,10 +113,23 @@ impl Renderer {
         }
 
         let framebuffer = match self.surface.get_current_texture() {
-            Ok(framebuffer) => framebuffer,
-            Err(err) => {
-                tracing::error!("Failed to acquire swapchain image: {err}");
+            wgpu::CurrentSurfaceTexture::Success(framebuffer) => framebuffer,
+            wgpu::CurrentSurfaceTexture::Suboptimal(framebuffer) => {
+                self.reconfigure_surface = true;
+                framebuffer
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.reconfigure_surface = true;
                 return;
+            }
+            wgpu::CurrentSurfaceTexture::Occluded => return,
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                tracing::error!("Timeout while acquiring swapchain image");
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Lost => panic!("Window surface was lost"),
+            wgpu::CurrentSurfaceTexture::Validation => {
+                panic!("Validation error while aquiring swapchain image");
             }
         };
 
