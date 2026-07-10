@@ -7,7 +7,7 @@ use std::{
 use debugger::Debugger;
 use game_view::GameView;
 use render::Renderer;
-use snes_emu::Snes;
+use snes_emu::{Snes, SnesVariant};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use web_time::Instant;
 use winit::{
@@ -127,7 +127,8 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
 
-        const TIMER_PERIOD: Duration = Duration::from_nanos(1_000_000_000 / 60);
+        const PERIOD_50HZ: Duration = Duration::from_nanos(1_000_000_000 / 50);
+        const PERIOD_60HZ: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
         let Some(emu_state) = &mut self.state.emulation_state else {
             return;
@@ -158,7 +159,10 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
-        *next_frame_time += TIMER_PERIOD;
+        *next_frame_time += match emu_state.snes.variant {
+            SnesVariant::Ntsc => PERIOD_60HZ,
+            SnesVariant::Pal => PERIOD_50HZ,
+        };
         active.window.request_redraw();
     }
 

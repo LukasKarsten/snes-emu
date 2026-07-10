@@ -1,7 +1,7 @@
 use std::{cmp, ops::RangeInclusive};
 
 use egui::{Ui, Widget};
-use snes_emu::{cpu::HvIrq, Snes};
+use snes_emu::{cpu::HvIrq, Snes, SnesVariant};
 
 use crate::EmulationState;
 
@@ -205,6 +205,15 @@ impl Tab for CpuTab {
                     HvIrq::End => "End"
                 );
                 ui.checkbox(&mut cpu.nmitimen_joypad_enable, "Joypad Enable");
+
+                enum_combobox!(
+                    ui,
+                    "snes-variant",
+                    "Variant",
+                    &mut emulation_state.snes.variant,
+                    SnesVariant::Ntsc => "NTSC",
+                    SnesVariant::Pal => "PAL",
+                );
             });
         });
     }

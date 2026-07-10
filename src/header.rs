@@ -2,6 +2,62 @@ use std::cmp::Ordering;
 
 use crate::cpu::memory::MappingMode;
 
+pub enum Region {
+    Japan,
+    NorthAmerica,
+    Europe,
+    Scandinavia,
+    Finland,
+    Denmark,
+    EuropeFrenchOnly,
+    Dutch,
+    Spanish,
+    German,
+    Italian,
+    Chinese,
+    Indonesia,
+    SouthKorea,
+    Common,
+    Canada,
+    Brazil,
+    NintendoGatewaySystem,
+    Australia,
+    X,
+    Y,
+    Z,
+}
+
+impl Region {
+    fn try_from_code(code: u8) -> Option<Self> {
+        let region = match code {
+            0x00 => Self::Japan,
+            0x01 => Self::NorthAmerica,
+            0x02 => Self::Europe,
+            0x03 => Self::Scandinavia,
+            0x04 => Self::Finland,
+            0x05 => Self::Denmark,
+            0x06 => Self::EuropeFrenchOnly,
+            0x07 => Self::Dutch,
+            0x08 => Self::Spanish,
+            0x09 => Self::German,
+            0x0A => Self::Italian,
+            0x0B => Self::Chinese,
+            0x0C => Self::Indonesia,
+            0x0D => Self::SouthKorea,
+            0x0E => Self::Common,
+            0x0F => Self::Canada,
+            0x10 => Self::Brazil,
+            0x11 => Self::NintendoGatewaySystem,
+            0x12 => Self::Australia,
+            0x13 => Self::X,
+            0x14 => Self::Y,
+            0x15 => Self::Z,
+            _ => return None,
+        };
+        Some(region)
+    }
+}
+
 pub struct RomHeader {
     pub title: Box<[u8]>,
     pub fast_rom: bool,
@@ -9,7 +65,7 @@ pub struct RomHeader {
     pub chipset: u8,
     pub rom_size: u32,
     pub ram_size: u32,
-    pub country: u8,
+    pub region: Option<Region>,
     pub developer_id: u8,
     pub rom_version: u8,
     pub checksum_complement: u16,
@@ -53,7 +109,7 @@ impl RomHeader {
             _ => return None,
         };
 
-        let country = header[25];
+        let region = Region::try_from_code(header[25]);
         let developer_id = header[26];
         let rom_version = header[27];
         let checksum_complement = header[28] as u16 | (header[29] as u16) << 8;
@@ -68,7 +124,7 @@ impl RomHeader {
             chipset,
             rom_size,
             ram_size,
-            country,
+            region,
             developer_id,
             rom_version,
             checksum_complement,
@@ -153,7 +209,7 @@ pub fn extract(rom: &[u8]) -> RomHeader {
         chipset: 0,
         rom_size,
         ram_size: 0,
-        country: 0,
+        region: None,
         developer_id: 0,
         rom_version: 0,
         checksum_complement: !checksum,
