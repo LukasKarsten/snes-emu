@@ -1162,7 +1162,13 @@ impl Ppu {
         colors
     }
 
-    fn get_bg_color(&self, x: u16, y: u16, bg_num: usize, mode_def: &ModeDefinition) -> LayerColor {
+    fn get_bg_color(
+        &self,
+        mut x: u16,
+        mut y: u16,
+        bg_num: usize,
+        mode_def: &ModeDefinition,
+    ) -> LayerColor {
         let bg = &self.backgrounds.backgrounds[bg_num];
 
         // screens in the order: top left, top right, bottom left, bottom right
@@ -1170,6 +1176,12 @@ impl Ppu {
             [[0, 0, 0, 0], [0, 1, 0, 1], [0, 0, 1, 1], [0, 1, 2, 3]][bg.size as usize];
 
         let tile_size = 8 << (bg.large_tiles as u8);
+
+        if bg.mosaic {
+            let size = self.backgrounds.mosaic_size.as_u16() + 1;
+            x = x / size * size;
+            y = y / size * size;
+        }
 
         let translated_x = x.wrapping_add(bg.h_offset & 0x3FF);
         let translated_y = y.wrapping_add(bg.v_offset & 0x3FF);
