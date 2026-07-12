@@ -217,6 +217,7 @@ struct ActiveState {
     renderer: Renderer,
     needs_redraw: bool,
     egui_state: egui_winit::State,
+    viewport_info: egui::ViewportInfo,
 }
 
 impl ActiveState {
@@ -236,11 +237,15 @@ impl ActiveState {
             None,
         );
 
+        let mut viewport_info = egui::ViewportInfo::default();
+        egui_winit::update_viewport_info(&mut viewport_info, egui_state.egui_ctx(), &window, true);
+
         Ok(Self {
             window,
             renderer,
             needs_redraw: true,
             egui_state,
+            viewport_info,
         })
     }
 
@@ -250,18 +255,40 @@ impl ActiveState {
         }
         self.needs_redraw = false;
 
-        let raw_input = self.egui_state.take_egui_input(&self.window);
+        egui_winit::update_viewport_info(
+            &mut self.viewport_info,
+            self.egui_state.egui_ctx(),
+            &self.window,
+            false,
+        );
+
+        let mut raw_input = self.egui_state.take_egui_input(&self.window);
+        raw_input
+            .viewports
+            .insert(egui::ViewportId::ROOT, self.viewport_info.take());
         let ctx = self.egui_state.egui_ctx();
+
         let output = ctx.run_ui(raw_input, |ctx| state.view(ctx));
 
-        let pixels_per_point = self.window.scale_factor() as f32 * ctx.zoom_factor();
-
+        let pixels_per_point = egui_winit::pixels_per_point(ctx, &self.window);
         let primitives = ctx.tessellate(output.shapes, pixels_per_point);
         self.renderer
             .render(output.textures_delta, &primitives, pixels_per_point);
 
         self.egui_state
             .handle_platform_output(&self.window, output.platform_output);
+
+        for (id, viewport_output) in output.viewport_output {
+            assert_eq!(id, egui::ViewportId::ROOT);
+            let mut actions_requested = Vec::new();
+            egui_winit::process_viewport_commands(
+                self.egui_state.egui_ctx(),
+                &mut self.viewport_info,
+                viewport_output.commands,
+                &self.window,
+                &mut actions_requested,
+            );
+        }
 
         if self.egui_state.egui_ctx().has_requested_repaint() {
             self.window.request_redraw();
@@ -331,9 +358,13 @@ impl AppState {
     }
 
     fn view(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("menu-bar").show(ui, |ui| {
-            egui::containers::menu::MenuBar::new().ui(ui, |ui| self.menu_bar(ui));
-        });
+        let is_fullscreen = ui.input(|input| input.viewport().fullscreen.unwrap_or(false));
+
+        if self.show_debugger || !is_fullscreen {
+            egui::Panel::top("menu-bar").show(ui, |ui| {
+                egui::containers::menu::MenuBar::new().ui(ui, |ui| self.menu_bar(ui));
+            });
+        }
 
         let Some(emu_state) = &mut self.emulation_state else {
             egui::CentralPanel::default().show(ui, |ui| {
@@ -344,7 +375,7 @@ impl AppState {
             return;
         };
 
-        ui.input_mut(|input| {
+        ui.input(|input| {
             if input.key_pressed(egui::Key::F3) {
                 self.show_debugger = !self.show_debugger;
             }
