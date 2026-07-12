@@ -686,12 +686,14 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
 }
 
 fn run_timer(emu: &mut Snes) {
-    let height = emu.ppu.output_height();
-
     let mut frame_finished = false;
+
+    let max_vpos = ppu::max_vpos(emu.variant);
 
     while emu.cpu.hv_counter_cycles < emu.cpu.cycles {
         emu.cpu.hv_counter_cycles += 4;
+
+        let output_height = emu.ppu.output_height();
 
         emu.cpu.h_counter += 1;
         if emu.cpu.h_counter > 339 {
@@ -700,13 +702,13 @@ fn run_timer(emu: &mut Snes) {
 
             if emu.cpu.v_counter == 2 {
                 emu.cpu.set_vblank_nmi_flag(false);
-            } else if emu.cpu.v_counter == height + 1 {
+            } else if emu.cpu.v_counter == output_height + 1 {
                 emu.cpu.set_vblank_nmi_flag(true);
             }
 
             // TODO: This is not actually dependent on the height but rather whether the console is
             // a NTSC or PAL console. (at least I think so ..)
-            if emu.cpu.v_counter > height + 37 {
+            if emu.cpu.v_counter > max_vpos {
                 emu.cpu.v_counter = 0;
             }
         }
@@ -718,7 +720,7 @@ fn run_timer(emu: &mut Snes) {
         }
 
         let hblank = emu.cpu.h_counter < 22 || emu.cpu.h_counter > 277;
-        let vblank = emu.cpu.v_counter < 1 || emu.cpu.v_counter > height;
+        let vblank = emu.cpu.v_counter < 1 || emu.cpu.v_counter > output_height;
 
         emu.cpu.hvbjoy_hblank_period_flag = hblank;
         emu.cpu.hvbjoy_vblank_period_flag = vblank;
@@ -740,7 +742,7 @@ fn run_timer(emu: &mut Snes) {
         }
         emu.cpu.hv_irq_cond = hv_irq_cond;
 
-        if emu.cpu.h_counter == 277 && emu.cpu.v_counter == height {
+        if emu.cpu.h_counter == 277 && emu.cpu.v_counter == output_height {
             frame_finished = true;
         }
     }

@@ -18,7 +18,7 @@ pub mod joypad;
 pub mod ppu;
 pub mod wram;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SnesVariant {
     Ntsc,
     Pal,

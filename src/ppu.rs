@@ -1,6 +1,6 @@
 use arbitrary_int::prelude::*;
 
-use crate::Snes;
+use crate::{Snes, SnesVariant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OBSELSizeSelection {
@@ -1497,6 +1497,13 @@ impl Color {
     }
 }
 
+pub fn max_vpos(snes_variant: SnesVariant) -> u16 {
+    match snes_variant {
+        SnesVariant::Ntsc => 261,
+        SnesVariant::Pal => 311,
+    }
+}
+
 pub fn catch_up(emu: &mut Snes) {
     /*
     let width = match ppu.setini_hpseudo512 {
@@ -1512,14 +1519,15 @@ pub fn catch_up(emu: &mut Snes) {
     };
     */
 
+    let max_vpos = max_vpos(emu.variant);
+    let output_height = emu.ppu.output_height();
+
     if emu.ppu.setini_interlace {
         todo!()
     }
     if emu.ppu.setini_hpseudo512 {
         todo!()
     }
-
-    let height = emu.ppu.output_height();
 
     while emu.ppu.cycles < emu.cpu.cycles() {
         emu.ppu.cycles += 4;
@@ -1528,13 +1536,13 @@ pub fn catch_up(emu: &mut Snes) {
         if emu.ppu.hpos > 339 {
             emu.ppu.hpos = 0;
             emu.ppu.vpos += 1;
-            if emu.ppu.vpos > height + 37 {
+            if emu.ppu.vpos > max_vpos {
                 emu.ppu.vpos = 0;
             }
         }
 
-        let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos >= 278;
-        let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos >= height;
+        let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos > 277;
+        let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos > output_height;
 
         #[allow(clippy::identity_op)]
         if !hblank && !vblank {
