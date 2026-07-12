@@ -281,7 +281,7 @@ impl EmulationState {
     fn new(snes: snes_emu::Snes, current_input: Arc<RwLock<Input>>) -> Self {
         Self {
             snes,
-            stopped: true,
+            stopped: false,
             current_image: Arc::new(Mutex::new(snes_emu::ppu::OutputImage::default())),
             current_image_height: snes_emu::ppu::OutputImage::MIN_HEIGHT,
             current_input,
