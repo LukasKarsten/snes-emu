@@ -1,7 +1,7 @@
 use std::{cmp, ops::RangeInclusive};
 
 use egui::{Ui, Widget};
-use snes_emu::{cpu::HvIrq, Snes, SnesVariant};
+use snes_emu::{Snes, SnesVariant, cpu::HvIrq};
 
 use crate::EmulationState;
 

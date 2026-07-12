@@ -10,7 +10,7 @@ pub use ppu::{
     PpuSpritesTab, PpuVRamTab, PpuWindowsTab,
 };
 
-use crate::{game_view::GameView, EmulationState};
+use crate::{EmulationState, game_view::GameView};
 
 macro_rules! enum_combobox {
     (
@@ -143,18 +143,18 @@ pub struct Debugger {
 
 impl Default for Debugger {
     fn default() -> Self {
-        let mut gen = TabWithIdGenerator::default();
+        let mut generator = TabWithIdGenerator::default();
 
-        let mut dock_state = DockState::new(vec![gen.create(Box::new(GameView))]);
+        let mut dock_state = DockState::new(vec![generator.create(Box::new(GameView))]);
         let tree = dock_state.main_surface_mut();
         tree.split_right(
             NodeIndex::root(),
             0.5,
             vec![
-                gen.create(Box::new(PpuOamTab::default())),
-                gen.create(Box::new(PpuVRamTab::default())),
-                gen.create(Box::new(PpuCgRamTab::default())),
-                gen.create(Box::new(PpuSpritesTab::default())),
+                generator.create(Box::new(PpuOamTab::default())),
+                generator.create(Box::new(PpuVRamTab::default())),
+                generator.create(Box::new(PpuCgRamTab::default())),
+                generator.create(Box::new(PpuSpritesTab::default())),
             ],
         );
 
@@ -162,11 +162,11 @@ impl Default for Debugger {
             NodeIndex::root(),
             0.5,
             vec![
-                gen.create(Box::new(PpuMiscTab)),
-                gen.create(Box::new(PpuBackgroundsTab)),
-                gen.create(Box::new(PpuObjectsTab)),
-                gen.create(Box::new(PpuScreensTab)),
-                gen.create(Box::new(PpuWindowsTab)),
+                generator.create(Box::new(PpuMiscTab)),
+                generator.create(Box::new(PpuBackgroundsTab)),
+                generator.create(Box::new(PpuObjectsTab)),
+                generator.create(Box::new(PpuScreensTab)),
+                generator.create(Box::new(PpuWindowsTab)),
             ],
         );
 
@@ -174,8 +174,8 @@ impl Default for Debugger {
             bottom,
             0.5,
             vec![
-                gen.create(Box::new(CpuTab::default())),
-                gen.create(Box::new(DmaTab)),
+                generator.create(Box::new(CpuTab::default())),
+                generator.create(Box::new(DmaTab)),
             ],
         );
 
@@ -183,15 +183,15 @@ impl Default for Debugger {
             NodeIndex::root(),
             0.6,
             vec![
-                gen.create(Box::new(BusTab::default())),
-                gen.create(Box::new(ApuRamTab::default())),
+                generator.create(Box::new(BusTab::default())),
+                generator.create(Box::new(ApuRamTab::default())),
             ],
         );
 
-        tree.split_below(right, 0.75, vec![gen.create(Box::new(ApuTab))]);
+        tree.split_below(right, 0.75, vec![generator.create(Box::new(ApuTab))]);
 
         Self {
-            generator: gen,
+            generator,
             dock_state,
         }
     }

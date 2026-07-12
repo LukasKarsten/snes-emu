@@ -1,6 +1,6 @@
 use std::fmt::{self, Write};
 
-use crate::{cpu, Snes};
+use crate::{Snes, cpu};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Param {

@@ -2,7 +2,7 @@ use std::fmt::{self, Write};
 
 use arbitrary_int::*;
 
-use crate::{apu, cpu::memory::MappingMode, ppu, Snes};
+use crate::{Snes, apu, cpu::memory::MappingMode, ppu};
 
 mod addr_mode;
 pub mod disasm;

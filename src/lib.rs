@@ -2,7 +2,7 @@ use cpu::StepResult;
 use input::InputDevice;
 
 pub use apu::Apu;
-pub use cpu::{memory::MappingMode, Cpu};
+pub use cpu::{Cpu, memory::MappingMode};
 pub use header::RomHeader;
 pub use joypad::JoypadIo;
 pub use ppu::{OutputImage, Ppu};

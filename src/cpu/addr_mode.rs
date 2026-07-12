@@ -1,8 +1,8 @@
 use crate::Snes;
 
 use super::{
-    memory::{next_instr_byte, read},
     Pointer,
+    memory::{next_instr_byte, read},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

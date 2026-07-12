@@ -8,7 +8,7 @@ use debugger::Debugger;
 use game_view::GameView;
 use render::Renderer;
 use snes_emu::{Snes, SnesVariant};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use web_time::Instant;
 use winit::{
     application::ApplicationHandler,

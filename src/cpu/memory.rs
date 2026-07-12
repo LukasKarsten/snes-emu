@@ -1,6 +1,6 @@
-use crate::{apu, ppu, Snes};
+use crate::{Snes, apu, ppu};
 
-use super::{addr_mode, addr_mode::AddressingMode, Operand};
+use super::{Operand, addr_mode, addr_mode::AddressingMode};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MappingMode {

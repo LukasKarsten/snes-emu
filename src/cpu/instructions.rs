@@ -1,13 +1,13 @@
 use crate::Snes;
 
 use super::{
-    addr_mode::{read_pointer, AddressingMode},
-    memory::{
-        get_operand_u16, get_operand_u8, next_instr_byte, pull16new, pull16old, pull8new, pull8old,
-        push16new, push16old, push8new, push8old, read, read_operand, set_operand_u16,
-        set_operand_u8, skip_instr_byte, write,
-    },
     Operand,
+    addr_mode::{AddressingMode, read_pointer},
+    memory::{
+        get_operand_u8, get_operand_u16, next_instr_byte, pull8new, pull8old, pull16new, pull16old,
+        push8new, push8old, push16new, push16old, read, read_operand, set_operand_u8,
+        set_operand_u16, skip_instr_byte, write,
+    },
 };
 
 fn inst_adc(emu: &mut Snes, addr_mode: AddressingMode) {
