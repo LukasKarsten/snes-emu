@@ -1,5 +1,5 @@
 use egui::{Id, Ui};
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui_dock::{DockArea, DockState, NodeIndex, NodePath, TabViewer};
 
 pub use apu::{ApuRamTab, ApuTab};
 pub use cpu::CpuTab;
@@ -56,6 +56,7 @@ struct TabWithId {
 
 struct DebugTabViewer<'a> {
     emulation_state: &'a mut EmulationState,
+    added_tabs: Vec<(Box<dyn Tab>, NodePath)>,
 }
 
 impl<'a> TabViewer for DebugTabViewer<'a> {
@@ -73,22 +74,53 @@ impl<'a> TabViewer for DebugTabViewer<'a> {
         tab.tab.ui(self.emulation_state, ui)
     }
 
-    fn closeable(&mut self, tab: &mut Self::Tab) -> bool {
-        tab.tab.closeable()
+    fn is_closeable(&self, tab: &Self::Tab) -> bool {
+        tab.tab.is_closeable()
     }
 
-    //fn tab_style_override(
-    //    &self,
-    //    tab: &Self::Tab,
-    //    global_style: &egui_dock::TabStyle,
-    //) -> Option<egui_dock::TabStyle> {
-    //    if tab.tab.type_id() == TypeId::of::<()>() {
-    //        let mut style = global_style.clone();
-    //        style.tab_body.inner_margin = egui::Margin::ZERO;
-    //        return Some(style);
-    //    }
-    //    None
-    //}
+    fn tab_style_override(
+        &self,
+        tab: &Self::Tab,
+        global_style: &egui_dock::TabStyle,
+    ) -> Option<egui_dock::TabStyle> {
+        tab.tab.tab_style_override(global_style)
+    }
+
+    fn add_popup(&mut self, ui: &mut Ui, path: NodePath) {
+        egui::menu::menu_style(ui.style_mut());
+
+        fn tab_button<T: Tab + Default + 'static>(
+            name: &str,
+            added_tabs: &mut Vec<(Box<dyn Tab>, NodePath)>,
+            path: NodePath,
+            ui: &mut egui::Ui,
+        ) {
+            if ui.button(name).clicked() {
+                added_tabs.push((Box::new(T::default()), path));
+            }
+        }
+
+        tab_button::<CpuTab>("CPU", &mut self.added_tabs, path, ui);
+        ui.menu_button("Memory", |ui| {
+            egui::menu::menu_style(ui.style_mut());
+            tab_button::<BusTab>("CPU", &mut self.added_tabs, path, ui);
+            tab_button::<ApuRamTab>("APU", &mut self.added_tabs, path, ui);
+            tab_button::<PpuOamTab>("OAM", &mut self.added_tabs, path, ui);
+            tab_button::<PpuVRamTab>("VRAM", &mut self.added_tabs, path, ui);
+            tab_button::<PpuCgRamTab>("CGRAM", &mut self.added_tabs, path, ui);
+            tab_button::<PpuSpritesTab>("Sprites", &mut self.added_tabs, path, ui);
+        });
+        tab_button::<DmaTab>("DMA", &mut self.added_tabs, path, ui);
+        ui.menu_button("PPU", |ui| {
+            egui::menu::menu_style(ui.style_mut());
+            tab_button::<PpuMiscTab>("Misc.", &mut self.added_tabs, path, ui);
+            tab_button::<PpuBackgroundsTab>("Backgrounds", &mut self.added_tabs, path, ui);
+            tab_button::<PpuObjectsTab>("Objects", &mut self.added_tabs, path, ui);
+            tab_button::<PpuScreensTab>("Screens", &mut self.added_tabs, path, ui);
+            tab_button::<PpuWindowsTab>("Windows", &mut self.added_tabs, path, ui);
+        });
+        tab_button::<ApuTab>("APU", &mut self.added_tabs, path, ui);
+    }
 }
 
 #[derive(Default)]
@@ -167,13 +199,21 @@ impl Default for Debugger {
 
 impl Debugger {
     pub fn show(&mut self, ui: &mut egui::Ui, emulation_state: &mut EmulationState) {
-        DockArea::new(&mut self.dock_state)
-            .show_inside(ui, &mut DebugTabViewer { emulation_state });
-    }
+        let mut viewer = DebugTabViewer {
+            emulation_state,
+            added_tabs: Vec::new(),
+        };
 
-    pub fn open_tab(&mut self, tab: Box<dyn Tab>) {
-        self.dock_state
-            .push_to_focused_leaf(self.generator.create(tab));
+        DockArea::new(&mut self.dock_state)
+            .show_add_popup(true)
+            .show_add_buttons(true)
+            .show_inside(ui, &mut viewer);
+
+        viewer.added_tabs.drain(..).for_each(|(tab, path)| {
+            self.dock_state.set_focused_node_and_surface(path);
+            self.dock_state
+                .push_to_focused_leaf(self.generator.create(tab));
+        });
     }
 }
 
@@ -182,7 +222,14 @@ pub trait Tab {
 
     fn ui(&mut self, emulation_state: &mut EmulationState, ui: &mut Ui);
 
-    fn closeable(&self) -> bool {
+    fn is_closeable(&self) -> bool {
         true
+    }
+
+    fn tab_style_override(
+        &self,
+        _global_style: &egui_dock::TabStyle,
+    ) -> Option<egui_dock::TabStyle> {
+        None
     }
 }

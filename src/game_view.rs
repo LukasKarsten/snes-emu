@@ -31,6 +31,19 @@ impl super::debugger::Tab for GameView {
                 ui.painter().add(callback);
             });
     }
+
+    fn is_closeable(&self) -> bool {
+        false
+    }
+
+    fn tab_style_override(
+        &self,
+        global_style: &egui_dock::TabStyle,
+    ) -> Option<egui_dock::TabStyle> {
+        let mut style = global_style.clone();
+        style.tab_body.inner_margin = egui::Margin::ZERO;
+        return Some(style);
+    }
 }
 
 pub struct GameViewResources {

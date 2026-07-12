@@ -353,10 +353,7 @@ impl AppState {
         if self.show_debugger {
             self.debugger.show(ui, emu_state);
         } else {
-            egui::CentralPanel::default().show(ui, |ui| {
-                use debugger::Tab;
-                GameView.ui(emu_state, ui);
-            });
+            <GameView as debugger::Tab>::ui(&mut GameView, emu_state, ui);
         }
 
         ui.input(|input| {
@@ -388,45 +385,6 @@ impl AppState {
                 self.should_exit = true;
             }
         });
-
-        if self.show_debugger {
-            ui.add_enabled_ui(self.emulation_state.is_some(), |ui| {
-                ui.menu_button("Debug", |ui| {
-                    fn tab_button<T: debugger::Tab + Default + 'static>(
-                        name: &str,
-                        debugger: &mut debugger::Debugger,
-                        ui: &mut egui::Ui,
-                    ) {
-                        if ui.button(name).clicked() {
-                            debugger.open_tab(Box::new(T::default()));
-                        }
-                    }
-
-                    tab_button::<debugger::CpuTab>("CPU", &mut self.debugger, ui);
-                    ui.menu_button("Memory", |ui| {
-                        tab_button::<debugger::BusTab>("CPU", &mut self.debugger, ui);
-                        tab_button::<debugger::ApuRamTab>("APU", &mut self.debugger, ui);
-                        tab_button::<debugger::PpuOamTab>("OAM", &mut self.debugger, ui);
-                        tab_button::<debugger::PpuVRamTab>("VRAM", &mut self.debugger, ui);
-                        tab_button::<debugger::PpuCgRamTab>("CGRAM", &mut self.debugger, ui);
-                        tab_button::<debugger::PpuSpritesTab>("Sprites", &mut self.debugger, ui);
-                    });
-                    tab_button::<debugger::DmaTab>("DMA", &mut self.debugger, ui);
-                    ui.menu_button("PPU", |ui| {
-                        tab_button::<debugger::PpuMiscTab>("Misc.", &mut self.debugger, ui);
-                        tab_button::<debugger::PpuBackgroundsTab>(
-                            "Backgrounds",
-                            &mut self.debugger,
-                            ui,
-                        );
-                        tab_button::<debugger::PpuObjectsTab>("Objects", &mut self.debugger, ui);
-                        tab_button::<debugger::PpuScreensTab>("Screens", &mut self.debugger, ui);
-                        tab_button::<debugger::PpuWindowsTab>("Windows", &mut self.debugger, ui);
-                    });
-                    tab_button::<debugger::ApuTab>("APU", &mut self.debugger, ui);
-                });
-            });
-        }
     }
 
     fn open_rom_picker(&mut self) {
