@@ -576,7 +576,11 @@ fn enter_interrupt_handler(emu: &mut Snes, interrupt: Interrupt) {
     // FIXME: Apparently there are "new" and "old" interrupts with different wrapping behavior here.
     let ret = emu.cpu.regs.pc.get();
     memory::push16old(emu, ret);
-    memory::push8old(emu, emu.cpu.regs.p.to_bits());
+    let mut p_bits = emu.cpu.regs.p.to_bits();
+    if emu.cpu.regs.p.e && interrupt == Interrupt::Break {
+        p_bits |= 0x10;
+    }
+    memory::push8old(emu, p_bits);
 
     emu.cpu.regs.p.i = true;
     emu.cpu.regs.p.d = false;
