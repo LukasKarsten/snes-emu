@@ -7,7 +7,7 @@ use std::{
 use debugger::Debugger;
 use game_view::GameView;
 use render::Renderer;
-use snes_emu::{Snes, SnesVariant};
+use snes_emu::{Snes, ppu::PpuVariant};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use web_time::Instant;
 use winit::{
@@ -159,9 +159,9 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
-        *next_frame_time += match emu_state.snes.variant {
-            SnesVariant::Ntsc => PERIOD_60HZ,
-            SnesVariant::Pal => PERIOD_50HZ,
+        *next_frame_time += match emu_state.snes.ppu.variant {
+            PpuVariant::Ntsc => PERIOD_60HZ,
+            PpuVariant::Pal => PERIOD_50HZ,
         };
         active.window.request_redraw();
     }

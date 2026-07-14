@@ -2,7 +2,7 @@ use std::fmt::{self, Write};
 
 use arbitrary_int::*;
 
-use crate::{Snes, apu, cpu::memory::MappingMode, ppu};
+use crate::{RomHeader, Snes, apu, cpu::memory::MappingMode, ppu};
 
 mod addr_mode;
 pub mod disasm;
@@ -310,7 +310,7 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(mapping_mode: MappingMode) -> Self {
+    pub fn from_rom_header(header: &RomHeader) -> Self {
         Self {
             nmitimen_vblank_nmi_enable: false,
             nmitimen_hv_irq: HvIrq::Disable,
@@ -354,7 +354,7 @@ impl Cpu {
             v_counter: 0,
             hv_counter_cycles: 0,
             cycles: 0, // will overflow after about 27 millennia
-            mapping_mode,
+            mapping_mode: header.mapping_mode,
             mdr: 0,
             dma: dma::Dma::default(),
             debug: CpuDebug::default(),
@@ -692,7 +692,7 @@ pub fn step(emu: &mut Snes, ignore_breakpoints: bool) -> StepResult {
 fn run_timer(emu: &mut Snes) {
     let mut frame_finished = false;
 
-    let max_vpos = ppu::max_vpos(emu.variant);
+    let max_vpos = emu.ppu.max_vpos();
 
     while emu.cpu.hv_counter_cycles < emu.cpu.cycles {
         emu.cpu.hv_counter_cycles += 4;

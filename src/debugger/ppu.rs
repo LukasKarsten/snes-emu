@@ -1,7 +1,7 @@
 use arbitrary_int::{traits::Integer, u3, u4, u6};
 use egui::Widget;
 use egui_memory_editor::MemoryEditor;
-use snes_emu::ppu::{MathEnable, WindowMaskLogic};
+use snes_emu::ppu::{MathEnable, PpuVariant, WindowMaskLogic};
 
 #[derive(Default)]
 pub struct PpuMiscTab;
@@ -36,6 +36,14 @@ impl super::Tab for PpuMiscTab {
                 ui.vertical(|ui| {
                     ui.checkbox(&mut ppu.inidisp_forced_blanking, "Forced Blanking");
                     drag_value(&mut ppu.inidisp_master_brightness, "Master Brightness", ui);
+                    enum_combobox!(
+                        ui,
+                        "snes-variant",
+                        "Variant",
+                        &mut ppu.variant,
+                        PpuVariant::Ntsc => "NTSC",
+                        PpuVariant::Pal => "PAL",
+                    );
                 });
 
                 ui.vertical(|ui| {

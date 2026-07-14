@@ -8,8 +8,6 @@ pub use joypad::JoypadIo;
 pub use ppu::{OutputImage, Ppu};
 pub use wram::WRam;
 
-use crate::header::Region;
-
 pub mod apu;
 pub mod cpu;
 mod header;
@@ -17,12 +15,6 @@ pub mod input;
 pub mod joypad;
 pub mod ppu;
 pub mod wram;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SnesVariant {
-    Ntsc,
-    Pal,
-}
 
 pub struct Snes {
     pub cpu: Cpu,
@@ -34,21 +26,15 @@ pub struct Snes {
     joypad: JoypadIo,
     frame_finished: bool,
     pub header: RomHeader,
-    pub variant: SnesVariant,
 }
 
 impl Snes {
     pub fn new(rom: Box<[u8]>) -> Self {
         let header = header::extract(&rom);
 
-        let variant = match header.region {
-            Some(Region::Japan | Region::NorthAmerica | Region::Canada) => SnesVariant::Ntsc,
-            _ => SnesVariant::Pal,
-        };
-
         let mut snes = Self {
-            cpu: Cpu::new(header.mapping_mode),
-            ppu: Ppu::default(),
+            cpu: Cpu::from_rom_header(&header),
+            ppu: Ppu::from_rom_header(&header),
             apu: Apu::default(),
             wram: WRam::default(),
             sram: vec![0; 0x080000].try_into().unwrap(),
@@ -56,7 +42,6 @@ impl Snes {
             joypad: JoypadIo::default(),
             frame_finished: false,
             header,
-            variant,
         };
         snes.cpu.raise_interrupt(cpu::Interrupt::Reset);
         snes

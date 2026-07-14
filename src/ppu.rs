@@ -1,6 +1,6 @@
 use arbitrary_int::prelude::*;
 
-use crate::{Snes, SnesVariant};
+use crate::{RomHeader, Snes, header::Region};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OBSELSizeSelection {
@@ -262,6 +262,12 @@ impl OutputImage {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PpuVariant {
+    Ntsc,
+    Pal,
+}
+
 pub struct Ppu {
     ////////////////////////////////////////////////////////////////////////////
     // write-only
@@ -323,6 +329,7 @@ pub struct Ppu {
 
     ////////////////////////////////////////////////////////////////////////////
     // internal
+    pub variant: PpuVariant,
     pub oam: Box<[u8; 0x220]>,
     oam_addr: u16,
     pub vram: Box<[u8; 0x10000]>,
@@ -341,8 +348,13 @@ pub struct Ppu {
     output: OutputImage,
 }
 
-impl Default for Ppu {
-    fn default() -> Self {
+impl Ppu {
+    pub fn from_rom_header(header: &RomHeader) -> Self {
+        let variant = match header.region {
+            Some(Region::Japan | Region::NorthAmerica | Region::Canada) => PpuVariant::Ntsc,
+            _ => PpuVariant::Pal,
+        };
+
         Self {
             backgrounds: Backgrounds::default(),
             windows: Windows::default(),
@@ -388,6 +400,7 @@ impl Default for Ppu {
             stat77: 0x00,
             stat78: 0x00,
 
+            variant,
             oam: vec![0; 0x220].try_into().unwrap(),
             oam_addr: 0,
             vram: vec![0; 0x10000].try_into().unwrap(),
@@ -406,9 +419,7 @@ impl Default for Ppu {
             output: OutputImage::default(),
         }
     }
-}
 
-impl Ppu {
     pub fn read_pure(&self, addr: u32) -> Option<u8> {
         let value = match addr {
             0x2134 => self.mpyl,
@@ -856,6 +867,13 @@ impl Ppu {
         self.cycles = 0;
         self.hpos = 0;
         self.vpos = 0;
+    }
+
+    pub fn max_vpos(&self) -> u16 {
+        match self.variant {
+            PpuVariant::Ntsc => 261,
+            PpuVariant::Pal => 311,
+        }
     }
 
     pub fn output_height(&self) -> u16 {
@@ -1497,13 +1515,6 @@ impl Color {
     }
 }
 
-pub fn max_vpos(snes_variant: SnesVariant) -> u16 {
-    match snes_variant {
-        SnesVariant::Ntsc => 261,
-        SnesVariant::Pal => 311,
-    }
-}
-
 pub fn catch_up(emu: &mut Snes) {
     /*
     let width = match ppu.setini_hpseudo512 {
@@ -1519,7 +1530,7 @@ pub fn catch_up(emu: &mut Snes) {
     };
     */
 
-    let max_vpos = max_vpos(emu.variant);
+    let max_vpos = emu.ppu.max_vpos();
     let output_height = emu.ppu.output_height();
 
     if emu.ppu.setini_interlace {
