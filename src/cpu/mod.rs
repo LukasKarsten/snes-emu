@@ -539,10 +539,6 @@ impl Cpu {
     pub fn cycles(&self) -> u64 {
         self.cycles
     }
-
-    pub fn mdr(&self) -> u8 {
-        self.mdr
-    }
 }
 
 fn int_reset(emu: &mut Snes) {
