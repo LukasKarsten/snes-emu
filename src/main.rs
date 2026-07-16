@@ -52,7 +52,7 @@ struct App {
 
 enum UserEvent {
     RomPicked(Option<Box<[u8]>>),
-    ActiveStateReady(ActiveState),
+    ActiveStateReady(Box<ActiveState>),
 }
 
 fn create_window(event_loop: &ActiveEventLoop) -> Result<Window, Box<dyn std::error::Error>> {
@@ -87,7 +87,7 @@ impl ApplicationHandler<UserEvent> for App {
         let proxy = self.state.event_loop_proxy.clone();
         let future = async move {
             match ActiveState::new(window, system_theme).await {
-                Ok(active) => _ = proxy.send_event(UserEvent::ActiveStateReady(active)),
+                Ok(active) => _ = proxy.send_event(UserEvent::ActiveStateReady(Box::new(active))),
                 Err(err) => tracing::error!("Failed to activate application: {err}"),
             }
         };
@@ -206,7 +206,7 @@ impl ApplicationHandler<UserEvent> for App {
                 // once after creating the window, otherwise the size may be 0x0.
                 let size = active_state.window.inner_size();
                 active_state.renderer.resize(size.width, size.height);
-                self.active = Some(active_state);
+                self.active = Some(*active_state);
             }
         }
     }

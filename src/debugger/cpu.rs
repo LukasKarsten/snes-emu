@@ -114,24 +114,24 @@ impl Tab for CpuTab {
                         ui.ctx().request_repaint();
                     }
 
-                    if ui.button("Create Breakpoint").clicked() {
-                        if let Some(addr) = self.create_addr {
-                            let next_bp = breakpoints
-                                .iter()
-                                .copied()
-                                .enumerate()
-                                .find(|(_, bp_addr)| *bp_addr >= addr);
+                    if ui.button("Create Breakpoint").clicked()
+                        && let Some(addr) = self.create_addr
+                    {
+                        let next_bp = breakpoints
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .find(|(_, bp_addr)| *bp_addr >= addr);
 
-                            match next_bp {
-                                Some((insert_idx, next_bp)) => {
-                                    if next_bp != addr {
-                                        breakpoints.insert(insert_idx, addr);
-                                    }
+                        match next_bp {
+                            Some((insert_idx, next_bp)) => {
+                                if next_bp != addr {
+                                    breakpoints.insert(insert_idx, addr);
                                 }
-                                None => breakpoints.push(addr),
                             }
-                            self.create_addr_input.clear();
+                            None => breakpoints.push(addr),
                         }
+                        self.create_addr_input.clear();
                     }
                 });
 

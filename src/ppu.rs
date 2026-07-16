@@ -1374,8 +1374,8 @@ impl Ppu {
         let tmp_x = x as i32 + offset_x - origin_x;
         let tmp_y = y as i32 + offset_y - origin_y;
 
-        let mut x = ((a * tmp_x + b * tmp_y >> 8) + origin_x) as u16;
-        let mut y = ((c * tmp_x + d * tmp_y >> 8) + origin_y) as u16;
+        let mut x = (((a * tmp_x + b * tmp_y) >> 8) + origin_x) as u16;
+        let mut y = (((c * tmp_x + d * tmp_y) >> 8) + origin_y) as u16;
 
         if x > 1023 || y > 1023 {
             let mask = match self.m7sel_screen_over {

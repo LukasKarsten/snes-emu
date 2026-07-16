@@ -42,7 +42,7 @@ impl super::debugger::Tab for GameView {
     ) -> Option<egui_dock::TabStyle> {
         let mut style = global_style.clone();
         style.tab_body.inner_margin = egui::Margin::ZERO;
-        return Some(style);
+        Some(style)
     }
 }
 
