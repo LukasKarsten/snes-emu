@@ -150,13 +150,7 @@ impl ApplicationHandler<UserEvent> for App {
                 emu_state.stopped = true;
             }
 
-            let output_image = emu_state.snes.ppu.output();
-
-            emu_state.current_image_height = emu_state.snes.ppu.output_height();
-            {
-                let mut current_image = emu_state.current_image.lock().unwrap();
-                *current_image = output_image.clone();
-            }
+            emu_state.update_displayed_image();
         }
 
         *next_frame_time += match emu_state.snes.ppu.variant {
@@ -313,6 +307,13 @@ impl EmulationState {
             current_image_height: snes_emu::ppu::OutputImage::MIN_HEIGHT,
             current_input,
         }
+    }
+
+    fn update_displayed_image(&mut self) {
+        let output_image = self.snes.ppu.output();
+        self.current_image_height = self.snes.ppu.output_height();
+        let mut current_image = self.current_image.lock().unwrap();
+        *current_image = output_image.clone();
     }
 }
 

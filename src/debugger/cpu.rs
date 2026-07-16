@@ -21,8 +21,6 @@ impl Tab for CpuTab {
     fn ui(&mut self, emulation_state: &mut EmulationState, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                let snes = &mut emulation_state.snes;
-
                 egui::Grid::new("cpu-state").striped(true).show(ui, |ui| {
                     fn show_reg_u16(
                         ui: &mut egui::Ui,
@@ -44,6 +42,7 @@ impl Tab for CpuTab {
                         ui.add(egui::DragValue::new(value).hexadecimal(2, false, true));
                     }
 
+                    let snes = &mut emulation_state.snes;
                     show_reg_u16(ui, "A", &mut snes.cpu.regs.a);
                     show_reg_u16(ui, "X", &mut snes.cpu.regs.x);
                     show_reg_u16(ui, "Y", &mut snes.cpu.regs.y);
@@ -63,11 +62,16 @@ impl Tab for CpuTab {
 
                 ui.horizontal(|ui| {
                     if ui.button("Step CPU").clicked() {
-                        assert_eq!(snes.step(), snes_emu::cpu::StepResult::Stepped);
+                        assert_eq!(
+                            emulation_state.snes.step(),
+                            snes_emu::cpu::StepResult::Stepped
+                        );
+                        emulation_state.update_displayed_image();
                     }
 
                     if ui.button("Step Frame").clicked() {
-                        snes.run();
+                        emulation_state.snes.run();
+                        emulation_state.update_displayed_image();
                     }
 
                     let btn_text = match emulation_state.stopped {
@@ -79,7 +83,7 @@ impl Tab for CpuTab {
                     }
 
                     if ui.button("Export Instructions").clicked() {
-                        dump_instructions(snes);
+                        dump_instructions(&emulation_state.snes);
                     }
                 });
 
