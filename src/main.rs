@@ -369,9 +369,23 @@ impl AppState {
 
         let Some(emu_state) = &mut self.emulation_state else {
             egui::CentralPanel::default().show(ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.label(egui::RichText::new("No ROM loaded").size(24.0).weak());
-                });
+                ui.allocate_ui_with_layout(
+                    ui.available_size() * egui::Vec2::new(1.0, 0.5),
+                    egui::Layout::bottom_up(egui::Align::Center),
+                    |ui| {
+                        ui.label(egui::RichText::new("No ROM loaded").size(24.0).weak());
+                    },
+                );
+
+                ui.allocate_ui_with_layout(
+                    ui.available_size() * egui::Vec2::new(1.0, 0.5),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        if ui.button("Open ROM").clicked() {
+                            self.open_rom_picker();
+                        }
+                    },
+                );
             });
             return;
         };
