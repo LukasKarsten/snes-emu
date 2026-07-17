@@ -1,11 +1,11 @@
 use egui::{Id, Ui};
 use egui_dock::{DockArea, DockState, NodeIndex, NodePath, TabViewer};
 
-pub use apu::{ApuRamTab, ApuTab};
-pub use cpu::CpuTab;
-pub use dma::DmaTab;
-pub use mem::BusTab;
-pub use ppu::{
+use apu::{ApuRamTab, ApuTab};
+use cpu::CpuTab;
+use dma::DmaTab;
+use mem::BusTab;
+use ppu::{
     PpuBackgroundsTab, PpuCgRamTab, PpuMiscTab, PpuOamTab, PpuObjectsTab, PpuScreensTab,
     PpuSpritesTab, PpuVRamTab, PpuWindowsTab,
 };
