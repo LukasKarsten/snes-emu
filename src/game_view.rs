@@ -15,10 +15,11 @@ impl super::debugger::Tab for GameView {
             .shadow(egui::epaint::Shadow::NONE)
             .corner_radius(0)
             .show(ui, |ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    ui.available_size(),
-                    egui::Sense::focusable_noninteractive(),
-                );
+                let (rect, sense) = ui.allocate_exact_size(ui.available_size(), egui::Sense::all());
+
+                if should_hide_pointer(ui) {
+                    sense.on_hover_and_drag_cursor(egui::CursorIcon::None);
+                }
 
                 let callback = egui_wgpu::Callback::new_paint_callback(
                     rect,
@@ -44,6 +45,35 @@ impl super::debugger::Tab for GameView {
         style.tab_body.inner_margin = egui::Margin::ZERO;
         Some(style)
     }
+}
+
+fn should_hide_pointer(ui: &mut egui::Ui) -> bool {
+    const HIDE_AFTER_SECS: f64 = 3.0;
+
+    let time = ui.time();
+
+    let pointer_moved = ui.input(|input| {
+        let motion = input.pointer.motion().unwrap_or(input.pointer.delta());
+        motion.length_sq() > 0.0
+    });
+
+    let id = ui.id().with("pointer-last-moved");
+    let secs_not_moved = ui.memory_mut(|memory| match pointer_moved {
+        true => {
+            memory.data.insert_temp(id, time);
+            0.0
+        }
+        false => {
+            let last_moved = memory.data.get_temp::<f64>(id).unwrap_or(0.0);
+            time - last_moved
+        }
+    });
+    let secs_until_hiding = HIDE_AFTER_SECS - secs_not_moved;
+    if secs_until_hiding > 0.0 {
+        ui.request_repaint_after_secs(secs_until_hiding as f32 + 0.1);
+    }
+
+    secs_until_hiding <= 0.0
 }
 
 pub struct GameViewResources {
