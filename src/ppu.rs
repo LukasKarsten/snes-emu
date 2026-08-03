@@ -341,6 +341,8 @@ pub struct Ppu {
     opvct_selector: u8,
     current_object_tiles: [ScanlineObjectTile; 34],
     current_object_tiles_len: usize,
+    ppu1_mdr: u8,
+    ppu2_mdr: u8,
 
     pub(super) cycles: u64,
     pub(super) hpos: u16,
@@ -412,6 +414,8 @@ impl Ppu {
             opvct_selector: 0,
             current_object_tiles: [ScanlineObjectTile::default(); 34],
             current_object_tiles_len: 0,
+            ppu1_mdr: 0,
+            ppu2_mdr: 0,
 
             cycles: 0,
             hpos: 0,
@@ -463,9 +467,10 @@ impl Ppu {
                 let addr = usize::from(self.oam_addr);
                 self.oam_addr = self.oam_addr.wrapping_add(1);
                 if addr >= self.oam.len() {
-                    return None;
+                    self.ppu1_mdr
+                } else {
+                    self.oam[addr]
                 }
-                self.oam[addr]
             }
             0x2139 => {
                 let value = self.vmdatal;
@@ -509,6 +514,14 @@ impl Ppu {
             }
             _ => return None,
         };
+
+        match addr {
+            0x2134..=0x213A => self.ppu1_mdr = value,
+            0x213B..=0x213D => self.ppu2_mdr = value,
+            0x213E => self.ppu1_mdr = value,
+            0x213F => self.ppu2_mdr = value,
+            _ => (),
+        }
 
         Some(value)
     }
