@@ -641,8 +641,9 @@ dependencies = [
 
 [[package]]
 name = "egui_memory_editor"
-version = "0.2.14"
-source = "git+https://github.com/LukasKarsten/egui_memory_editor.git#b1ee7d3da14c3a4dc9bf652503dd7f1141ba5d76"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93b0f51b9c9b3cd8c4c0027577d3ea1c59587fddb69969291129282b71ed965e"
 dependencies = [
  "egui",
 ]
