@@ -693,10 +693,10 @@ impl Apu {
             self.a = (ya / x) as u8;
             self.y = (ya % x) as u8;
         } else {
-            let quotient = ya - (x << 9);
-            let divident = 256 - x;
-            self.a = 255u16.wrapping_sub(quotient / divident) as u8;
-            self.y = x.wrapping_add(quotient % divident) as u8;
+            let dividend = ya - (x << 9);
+            let divisor = 256 - x;
+            self.a = 255u16.wrapping_sub(dividend / divisor) as u8;
+            self.y = x.wrapping_add(dividend % divisor) as u8;
         }
         self.psw.n = self.a & 0x80 != 0;
         self.psw.z = self.a == 0;
