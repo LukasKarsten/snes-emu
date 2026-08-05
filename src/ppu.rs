@@ -316,6 +316,8 @@ pub struct Ppu {
     pub setini_hpseudo512: bool,
     pub setini_extbg: bool,
     pub setini_external_sync: bool,
+    pub ppu1_version: u4,
+    pub ppu2_version: u4,
 
     ////////////////////////////////////////////////////////////////////////////
     // read-only
@@ -324,8 +326,10 @@ pub struct Ppu {
     pub mpyh: u8,
     pub ophct: u16,
     pub opvct: u16,
-    pub stat77: u8,
-    pub stat78: u8,
+    pub obj_time_overflow: bool,
+    pub obj_range_overflow: bool,
+    pub interlace_field: u1,
+    pub hv_counter_latch_flag: bool,
 
     ////////////////////////////////////////////////////////////////////////////
     // internal
@@ -399,8 +403,12 @@ impl Ppu {
             mpyh: 0x00,
             ophct: 0x01FF,
             opvct: 0x01FF,
-            stat77: 0x00,
-            stat78: 0x00,
+            obj_time_overflow: false,
+            obj_range_overflow: false,
+            interlace_field: u1::from_u8(0),
+            hv_counter_latch_flag: false,
+            ppu1_version: u4::from_u8(1),
+            ppu2_version: u4::from_u8(3),
 
             variant,
             oam: vec![0; 0x220].try_into().unwrap(),
@@ -424,6 +432,21 @@ impl Ppu {
         }
     }
 
+    fn stat77(&self) -> u8 {
+        ((self.obj_time_overflow as u8) << 7)
+            | ((self.obj_range_overflow as u8) << 6)
+            | (self.ppu1_mdr & 0x10)
+            | self.ppu1_version.as_u8()
+    }
+
+    fn stat78(&self) -> u8 {
+        (self.interlace_field.as_u8() << 7)
+            | ((self.hv_counter_latch_flag as u8) << 6)
+            | (self.ppu2_mdr & 0x20)
+            | ((self.variant == PpuVariant::Pal) as u8)
+            | self.ppu2_version.as_u8()
+    }
+
     pub fn read_pure(&self, addr: u32) -> Option<u8> {
         let value = match addr {
             0x2134 => self.mpyl,
@@ -444,8 +467,8 @@ impl Ppu {
             }
             0x213C => (self.ophct >> self.ophct_selector) as u8,
             0x213D => (self.opvct >> self.opvct_selector) as u8,
-            0x213E => self.stat77,
-            0x213F => self.stat78,
+            0x213E => self.stat77(),
+            0x213F => self.stat78(),
             _ => return None,
         };
 
@@ -460,7 +483,7 @@ impl Ppu {
             0x2137 => {
                 self.ophct = self.hpos;
                 self.opvct = self.vpos;
-                self.stat78 |= 0x40;
+                self.hv_counter_latch_flag = true;
                 return None;
             }
             0x2138 => {
@@ -504,10 +527,10 @@ impl Ppu {
                 self.opvct_selector ^= 8;
                 value
             }
-            0x213E => self.stat77,
+            0x213E => self.stat77(),
             0x213F => {
-                let value = self.stat78;
-                self.stat78 &= !0x40;
+                let value = self.stat78();
+                self.hv_counter_latch_flag = false;
                 self.ophct_selector = 0;
                 self.opvct_selector = 0;
                 value
@@ -941,7 +964,7 @@ impl Ppu {
 
             num_objects += 1;
             if num_objects > MAX_OBJECTS {
-                self.stat77 |= 1 << 6;
+                self.obj_range_overflow = true;
                 break;
             }
 
@@ -949,7 +972,7 @@ impl Ppu {
                 // If the previous object filled to tiles array exactly, the time overflow flag
                 // would not have been set yet, and since we would be adding at least one tile now,
                 // we need to set the flag here too.
-                self.stat77 |= 1 << 7;
+                self.obj_time_overflow = true;
                 continue;
             }
 
@@ -971,7 +994,7 @@ impl Ppu {
 
             for mut x_off in (0..width).step_by(8) {
                 if num_tiles >= self.current_object_tiles.len() {
-                    self.stat77 |= 1 << 7;
+                    self.obj_time_overflow = true;
                     continue 'iterate_objects;
                 }
 
