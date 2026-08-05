@@ -207,11 +207,13 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 struct ActiveState {
-    window: Arc<Window>,
     renderer: Renderer,
     needs_redraw: bool,
     egui_state: egui_winit::State,
     viewport_info: egui::ViewportInfo,
+    // Drop window after renderer to avoid a segfault on wayland.
+    // See https://github.com/servo/servo/issues/36711#issuecomment-2936668312
+    window: Arc<Window>,
 }
 
 impl ActiveState {
