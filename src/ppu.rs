@@ -1589,7 +1589,7 @@ pub fn catch_up(emu: &mut Snes) {
         }
 
         let hblank = emu.ppu.hpos < 22 || emu.ppu.hpos > 277;
-        let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos > output_height;
+        let vblank = emu.ppu.vpos < 1 || emu.ppu.vpos >= output_height;
 
         #[allow(clippy::identity_op)]
         if !hblank && !vblank {
