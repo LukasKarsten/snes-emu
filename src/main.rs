@@ -304,7 +304,7 @@ impl EmulationState {
             snes,
             stopped: false,
             current_image: Arc::new(Mutex::new(snes_emu::ppu::OutputImage::default())),
-            current_image_height: snes_emu::ppu::OutputImage::MIN_HEIGHT,
+            current_image_height: snes_emu::ppu::OUTPUT_HEIGHT,
             current_input,
         }
     }

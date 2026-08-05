@@ -244,16 +244,20 @@ impl Default for OutputImage {
     }
 }
 
+pub const OUTPUT_WIDTH: u16 = 256;
+pub const OUTPUT_HEIGHT: u16 = 224;
+pub const OUTPUT_HEIGHT_OVERSCAN: u16 = 239;
+
+pub const OUTPUT_WIDTH_MAX: u16 = OUTPUT_WIDTH * 2;
+pub const OUTPUT_HEIGHT_MAX: u16 = OUTPUT_HEIGHT_OVERSCAN * 2;
+
 impl OutputImage {
-    pub const WIDTH: u16 = 512;
-    pub const MAX_HEIGHT: u16 = 478;
-    pub const MIN_HEIGHT: u16 = 224;
-    pub const MAX_PIXELS: usize = Self::WIDTH as usize * Self::MAX_HEIGHT as usize;
+    pub const MAX_PIXELS: usize = OUTPUT_WIDTH_MAX as usize * OUTPUT_HEIGHT_MAX as usize;
 
     fn set(&mut self, x: u16, y: u16, color: OutputColor) {
-        assert!(x < 256 * 2);
-        assert!(y < 239 * 2);
-        let idx = usize::from(x) | (usize::from(y) * 512);
+        assert!(x < OUTPUT_WIDTH_MAX);
+        assert!(y < OUTPUT_HEIGHT_MAX);
+        let idx = usize::from(x) | (usize::from(y) * usize::from(OUTPUT_WIDTH_MAX));
         self.0[idx] = color;
     }
 
@@ -914,8 +918,8 @@ impl Ppu {
 
     pub fn output_height(&self) -> u16 {
         match self.setini_overscan {
-            false => 224,
-            true => 239,
+            false => OUTPUT_HEIGHT,
+            true => OUTPUT_HEIGHT_OVERSCAN,
         }
     }
 

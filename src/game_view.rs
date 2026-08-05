@@ -89,8 +89,8 @@ impl GameViewResources {
             label: Some("game-view"),
             dimension: wgpu::TextureDimension::D2,
             size: wgpu::Extent3d {
-                width: snes_emu::OutputImage::WIDTH as u32,
-                height: snes_emu::OutputImage::MAX_HEIGHT as u32,
+                width: snes_emu::ppu::OUTPUT_WIDTH_MAX as u32,
+                height: snes_emu::ppu::OUTPUT_HEIGHT_MAX as u32,
                 depth_or_array_layers: 1,
             },
             format: wgpu::TextureFormat::Rgba8Unorm,
@@ -248,6 +248,8 @@ impl egui_wgpu::CallbackTrait for GameRenderCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
+        use snes_emu::ppu::{OUTPUT_HEIGHT_MAX, OUTPUT_WIDTH_MAX};
+
         let Some(resources) = callback_resources.get_mut::<GameViewResources>() else {
             panic!("resources missing");
         };
@@ -256,10 +258,7 @@ impl egui_wgpu::CallbackTrait for GameRenderCallback {
         let image_height = self.image_height * 2;
 
         let uniform_data = UniformData {
-            image_extent: [
-                1.0,
-                image_height as f32 / snes_emu::OutputImage::MAX_HEIGHT as f32,
-            ],
+            image_extent: [1.0, image_height as f32 / OUTPUT_HEIGHT_MAX as f32],
             padding: [0; 2],
         };
 
@@ -279,11 +278,11 @@ impl egui_wgpu::CallbackTrait for GameRenderCallback {
             current_image.pixels_rgba(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(512 * 4),
+                bytes_per_row: Some(u32::from(OUTPUT_WIDTH_MAX) * 4),
                 rows_per_image: None,
             },
             wgpu::Extent3d {
-                width: 512,
+                width: u32::from(OUTPUT_WIDTH_MAX),
                 height: u32::from(image_height),
                 depth_or_array_layers: 1,
             },
@@ -303,7 +302,7 @@ impl egui_wgpu::CallbackTrait for GameRenderCallback {
         };
 
         let image_size = egui::Vec2::new(
-            snes_emu::OutputImage::WIDTH as f32,
+            snes_emu::ppu::OUTPUT_WIDTH_MAX as f32,
             self.image_height as f32 * 2.0,
         );
 
